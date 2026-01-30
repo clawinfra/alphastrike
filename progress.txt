@@ -1,0 +1,82 @@
+# AlphaStrike Trading Bot - Development Progress
+
+## Project Overview
+- **Goal:** Build autonomous ML-based crypto trading system for WEEX perpetual futures
+- **Estimated Stories:** 30
+- **Estimated Iterations:** 25-35
+
+---
+
+## Codebase Patterns (READ THIS FIRST ON EACH ITERATION)
+
+### Architecture Overview
+- Python 3.12+ with asyncio for all I/O
+- Pydantic Settings for configuration
+- aiohttp/aiosqlite for async operations
+- PyTorch for LSTM, sklearn/xgboost/lightgbm for other models
+- Structured JSON logging throughout
+
+### Directory Structure
+```
+src/
+├── core/config.py          # Pydantic Settings - all parameters
+├── data/                   # Data layer (WebSocket, REST, DB, Gateway)
+├── features/               # Feature calculation (86 canonical features)
+├── ml/                     # ML models + ensemble + trainer
+├── strategy/               # Regime detection, exits
+├── risk/                   # Position sizing, exposure, risk validation
+├── execution/              # Signal processing, orders, position sync
+└── utils/                  # Fee calculator, drift detector
+```
+
+### Coding Conventions
+- All async functions prefixed with `async def`
+- All exchange operations are async
+- Use `logging.getLogger(__name__)` for module loggers
+- Type hints on all function signatures
+- Dataclasses for structured data (Position, Candle, Order, etc.)
+- `@dataclass(frozen=True)` for immutable data structures
+
+### Key Constants (from docs/ARCHITECTURE.md)
+```python
+# Trading thresholds
+LONG_THRESHOLD = 0.75
+SHORT_THRESHOLD = 0.25
+HIGH_CONFIDENCE = 0.75
+
+# Risk limits
+MAX_LEVERAGE = 20
+DAILY_DRAWDOWN_LIMIT = 0.05  # 5% base, adaptive 5-7%
+TOTAL_DRAWDOWN_LIMIT = 0.15  # 15% hard stop
+MIN_BALANCE = 9000.0
+
+# Position limits
+PER_TRADE_EXPOSURE = 0.10  # 10% base, adaptive 5-20%
+PER_PAIR_EXPOSURE = 0.25   # 25% base, adaptive 15-45%
+TOTAL_EXPOSURE = 0.80      # 80% base, adaptive 30-95%
+
+# Trade frequency
+COOLDOWN_SECONDS = 3600    # 1 hour
+MAX_TRADES_PER_DAY = 12
+MAX_TRADES_PER_SYMBOL = 2
+
+# ML ensemble weights
+XGBOOST_WEIGHT = 0.30
+LIGHTGBM_WEIGHT = 0.25
+LSTM_WEIGHT = 0.25
+RF_WEIGHT = 0.20
+```
+
+### Gotchas & Learnings
+1. **LightGBM degenerate trees:** Always validate num_leaves > 1 before using
+2. **Position sync:** Exchange is always source of truth
+3. **Close orders:** NEVER block close orders in risk manager
+4. **Balanced training:** Critical for preventing SHORT bias
+
+---
+
+## Progress Log
+
+(Progress entries will be added as stories are completed)
+
+---

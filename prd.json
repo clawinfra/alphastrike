@@ -1,0 +1,551 @@
+{
+  "project": "AlphaStrike Trading Bot",
+  "branchName": "ralph/alphastrike-v1",
+  "description": "Autonomous ML-based crypto trading system for WEEX perpetual futures with 4-model ensemble, adaptive risk management, and regime-aware execution",
+  "complexity": {
+    "score": 14.2,
+    "category": "medium",
+    "estimated_iterations": 25
+  },
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Core Configuration & Settings Module",
+      "description": "As a developer, I want a centralized configuration system using Pydantic Settings so that all trading parameters are validated and type-safe",
+      "acceptanceCriteria": [
+        "Create src/core/config.py with Pydantic Settings class",
+        "Include all trading thresholds (long_threshold: 0.75, short_threshold: 0.25)",
+        "Include position sizing limits (5-20% per trade, 15-45% per pair, 30-95% total)",
+        "Include risk controls (20x max leverage, 5-7% daily drawdown, 15% total, $9000 minimum)",
+        "Include trade frequency limits (3600s cooldown, 12 max trades/day)",
+        "Create .env.example with all required environment variables",
+        "Typecheck passes with pyright/mypy"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "Foundation module - all other modules depend on this"
+    },
+    {
+      "id": "US-002",
+      "title": "Database Layer with SQLite",
+      "description": "As a system, I need persistent storage for candles, trades, and model metadata so that data survives restarts",
+      "acceptanceCriteria": [
+        "Create src/data/database.py with async SQLite support using aiosqlite",
+        "Implement tables: candles, trades, ai_log_uploads, training_cache, performance_metrics",
+        "Create async methods: initialize_db(), save_candle(), get_candles(), save_trade(), get_trades()",
+        "Add connection pooling and proper error handling",
+        "Write unit tests for all database operations",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "Required by all components that need persistence"
+    },
+    {
+      "id": "US-003",
+      "title": "WEEX REST Client for Account & Orders",
+      "description": "As a trading system, I need to interact with WEEX exchange API for account info and order management",
+      "acceptanceCriteria": [
+        "Create src/data/rest_client.py with async aiohttp client",
+        "Implement HMAC-SHA256 request signing per WEEX API spec",
+        "Methods: get_account_balance(), get_positions(), place_order(), cancel_order()",
+        "Methods: set_leverage(), place_stop_loss_order(), place_take_profit_order()",
+        "Add rate limiting (respect WEEX limits) and retry logic with exponential backoff",
+        "Add proper error handling and logging",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "Core exchange interaction layer"
+    },
+    {
+      "id": "US-004",
+      "title": "WEEX WebSocket Client for Real-Time Data",
+      "description": "As a trading system, I need real-time market data streaming from WEEX for live trading signals",
+      "acceptanceCriteria": [
+        "Create src/data/websocket_client.py with async websockets library",
+        "Connect to WEEX WebSocket endpoints for candle, ticker, orderbook channels",
+        "Implement auto-reconnection with exponential backoff (1s, 2s, 4s, max 60s)",
+        "Parse and validate incoming candle messages into typed dataclasses",
+        "Implement subscription management for multiple symbols",
+        "Add heartbeat/ping handling to maintain connection",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "Critical path for real-time data"
+    },
+    {
+      "id": "US-005",
+      "title": "Data Gateway with Quality Gates",
+      "description": "As a trading system, I need to filter bad/stale data before it reaches the feature layer to prevent garbage-in-garbage-out",
+      "acceptanceCriteria": [
+        "Create src/data/data_gateway.py with quality gate pipeline",
+        "Implement StalenessChecker (< 5 seconds threshold)",
+        "Implement SequenceChecker (gap detection, backfill signaling)",
+        "Implement PriceRangeValidator (within 50% of 24h range)",
+        "Implement OHLCLogicValidator (high >= low, open/close within range)",
+        "Implement VolumeValidator (< 100x average)",
+        "Implement DataCircuitBreaker (5 failures = open, 60s reset)",
+        "Create FallbackDataProvider for circuit breaker scenarios",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "Layer 0 risk control - data quality"
+    },
+    {
+      "id": "US-006",
+      "title": "Technical Indicators Feature Module",
+      "description": "As an ML pipeline, I need 35 technical indicators calculated from candle data for model features",
+      "acceptanceCriteria": [
+        "Create src/features/technical.py with indicator calculations",
+        "Implement RSI (7, 14, 21 periods), RSI_slope, RSI_divergence",
+        "Implement Stochastic (K, D), MACD (line, signal, histogram)",
+        "Implement ADX (14), +DI, -DI, ADX_ROC(5), ADX_slope",
+        "Implement EMA (9, 21, 50), EMA_crossovers",
+        "Implement ATR (14), ATR_ratio, Bollinger_Bands, ATR_percentile",
+        "Implement Volume_ratio, OBV, Volume_profile",
+        "All calculations use numpy for performance",
+        "Unit tests for each indicator with known values",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "35 of 86 canonical features"
+    },
+    {
+      "id": "US-007",
+      "title": "Microstructure Features Module",
+      "description": "As an ML pipeline, I need orderbook and market microstructure features for model input",
+      "acceptanceCriteria": [
+        "Create src/features/microstructure.py with microstructure calculations",
+        "Implement orderbook_imbalance (bid/ask depth ratio)",
+        "Implement funding_rate extraction from exchange data",
+        "Implement open_interest tracking",
+        "Implement volume_profile (recent trade distribution)",
+        "Implement large_trade_ratio (whale activity detection)",
+        "All features return normalized values suitable for ML",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "7 of 86 canonical features"
+    },
+    {
+      "id": "US-008",
+      "title": "Feature Pipeline Orchestrator",
+      "description": "As an ML pipeline, I need a unified pipeline that calculates all 86 features from raw data",
+      "acceptanceCriteria": [
+        "Create src/features/pipeline.py orchestrating all feature modules",
+        "Combine Technical (35) + Microstructure (7) + Fee (5) + Cross-Asset (3) + Time (5) + Volatility (4) = 86 features",
+        "Implement fee features: maker_fee, taker_fee, funding_impact, fee_drag, breakeven_move",
+        "Implement time features: session_indicator, hour_sin, hour_cos, day_sin, day_cos",
+        "Implement volatility features: atr_ratio, realized_vol, vol_regime, vol_percentile",
+        "Add feature caching with 250ms TTL",
+        "Return standardized feature dict with consistent naming",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "Combines all feature modules into unified output"
+    },
+    {
+      "id": "US-009",
+      "title": "Feature Validator with Drift Detection",
+      "description": "As an ML pipeline, I need to detect feature drift from training distribution to degrade confidence when data shifts",
+      "acceptanceCriteria": [
+        "Create src/features/feature_validator.py with drift detection",
+        "Implement PSI (Population Stability Index) calculation (threshold > 0.25)",
+        "Implement KS-test for distribution divergence (p < 0.01)",
+        "Implement CUSUM for persistent mean drift (> 5*std)",
+        "Implement Z-score outlier detection (|z| > 3.5)",
+        "Calculate health score (0-100) from combined drift metrics",
+        "Calculate confidence multiplier based on health (0.1-1.0)",
+        "Create models/reference_distributions.json structure for baseline stats",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "Layer 0.5 risk control - feature quality"
+    },
+    {
+      "id": "US-010",
+      "title": "XGBoost Model Wrapper",
+      "description": "As an ML ensemble, I need an XGBoost model for primary trend prediction (30% ensemble weight)",
+      "acceptanceCriteria": [
+        "Create src/ml/xgboost_model.py with model wrapper class",
+        "Implement train() method with XGBoost parameters optimized for tabular data",
+        "Implement predict() returning probability (0-1 scale)",
+        "Implement save() and load() for model persistence",
+        "Implement health_check() for degenerate model detection",
+        "Handle feature alignment between training and inference",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "30% of ensemble weight"
+    },
+    {
+      "id": "US-011",
+      "title": "LightGBM Model Wrapper",
+      "description": "As an ML ensemble, I need a LightGBM model for fast gradient boosting (25% ensemble weight)",
+      "acceptanceCriteria": [
+        "Create src/ml/lightgbm_model.py with model wrapper class",
+        "Implement train() with LightGBM leaf-wise parameters",
+        "CRITICAL: Validate num_leaves > 1 to prevent degenerate trees",
+        "Implement predict() returning probability (0-1 scale)",
+        "Implement save() and load() for model persistence",
+        "Implement health_check() detecting single-class prediction pattern",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "25% of ensemble weight - prone to degenerate trees issue"
+    },
+    {
+      "id": "US-012",
+      "title": "LSTM Model Wrapper",
+      "description": "As an ML ensemble, I need an LSTM model for sequence pattern recognition (25% ensemble weight)",
+      "acceptanceCriteria": [
+        "Create src/ml/lstm_model.py with PyTorch LSTM implementation",
+        "Implement LSTMModel class with configurable hidden_size, num_layers",
+        "Implement train() with proper sequence windowing (default 20 steps)",
+        "Implement predict() with GPU acceleration when available",
+        "Implement save() and load() for model state dict",
+        "Implement health_check() for prediction variance check",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "25% of ensemble weight - PyTorch"
+    },
+    {
+      "id": "US-013",
+      "title": "Random Forest Model Wrapper",
+      "description": "As an ML ensemble, I need a Random Forest model for robust ensemble diversity (20% ensemble weight)",
+      "acceptanceCriteria": [
+        "Create src/ml/random_forest_model.py with sklearn RandomForest wrapper",
+        "Implement train() with balanced class weights",
+        "Implement predict() returning probability (0-1 scale)",
+        "Implement save() and load() using joblib",
+        "Implement health_check() for prediction diversity",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "20% of ensemble weight - robust to outliers"
+    },
+    {
+      "id": "US-014",
+      "title": "ML Ensemble Orchestrator",
+      "description": "As a trading system, I need a 4-model ensemble that combines predictions with dynamic weighting",
+      "acceptanceCriteria": [
+        "Create src/ml/ensemble.py combining all 4 models",
+        "Implement weighted average: XGBoost(30%) + LightGBM(25%) + LSTM(25%) + RF(20%)",
+        "Implement threshold-relative confidence calculation",
+        "Implement check_model_health() for all models",
+        "Implement _redistribute_weights() when models are unhealthy",
+        "Minimum 2 healthy models required for signal generation",
+        "Implement check_and_reload_models() for hot reloading",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "Core ML prediction layer"
+    },
+    {
+      "id": "US-015",
+      "title": "Confidence Filter for Prediction Bounds",
+      "description": "As an ML layer, I need to reject low-confidence predictions before they reach the strategy layer",
+      "acceptanceCriteria": [
+        "Create src/ml/confidence_filter.py with composite scoring",
+        "Implement minimum confidence check (>= 0.55)",
+        "Implement model agreement check (>= 50% same direction)",
+        "Implement threshold proximity check (>= 0.10 from 0.5)",
+        "Implement prediction stability check (>= 60% consistent over 5 signals)",
+        "Calculate composite score with weights (30%, 25%, 25%, 20%)",
+        "Implement regime-adjusted thresholds (trending: 0.55, ranging: 0.70, high_vol: 0.65, extreme: 0.75)",
+        "Reject signals below threshold -> convert to HOLD",
+        "Log all rejections with detailed breakdown",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "Layer 0.75 risk control - prediction quality"
+    },
+    {
+      "id": "US-016",
+      "title": "Model Trainer with Auto-Retraining",
+      "description": "As an ML system, I need automatic model retraining with balanced labels and validation",
+      "acceptanceCriteria": [
+        "Create src/ml/trainer.py with training pipeline",
+        "Implement data collection (1000+ candles from database)",
+        "Implement 3-class label generation: LONG (>0.5% up), SHORT (>0.5% down), HOLD",
+        "Implement balanced sampling for equal class distribution",
+        "Implement 80/20 time-ordered train/validation split",
+        "Implement dynamic retraining interval (13-90 minutes based on volatility)",
+        "Implement out-of-sample validation before deployment",
+        "Trigger hot reload in ensemble after successful training",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "Self-healing model management"
+    },
+    {
+      "id": "US-017",
+      "title": "Market Regime Detector",
+      "description": "As a strategy layer, I need to classify current market regime for adaptive parameter adjustment",
+      "acceptanceCriteria": [
+        "Create src/strategy/regime_detector.py with regime classification",
+        "Detect TRENDING_UP: ADX > 25, Price > EMA20, +DI > -DI",
+        "Detect TRENDING_DOWN: ADX > 25, Price < EMA20, -DI > +DI",
+        "Detect RANGING: ADX < 20",
+        "Detect HIGH_VOLATILITY: ATR_ratio > 1.5",
+        "Detect EXTREME_VOLATILITY: ATR_ratio > 2.0",
+        "Detect TREND_EXHAUSTION: ADX > 60 and ADX_ROC < -2",
+        "Return RegimeState with current regime and confidence",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "Foundation for adaptive strategy"
+    },
+    {
+      "id": "US-018",
+      "title": "Portfolio State Manager",
+      "description": "As a risk layer, I need to track current portfolio state including positions, exposure, and PnL",
+      "acceptanceCriteria": [
+        "Create src/risk/portfolio.py with PortfolioManager class",
+        "Track all open positions with entry price, size, side, leverage",
+        "Calculate current exposure per position and total",
+        "Calculate unrealized PnL for all positions",
+        "Track daily PnL and drawdown metrics",
+        "Sync state with exchange positions periodically",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "Central portfolio state"
+    },
+    {
+      "id": "US-019",
+      "title": "Position Sizer with Half-Kelly",
+      "description": "As a risk layer, I need adaptive position sizing based on Kelly criterion with confidence and volatility adjustments",
+      "acceptanceCriteria": [
+        "Create src/risk/position_sizer.py with Half-Kelly implementation",
+        "Calculate kelly_fraction = win_rate - (1-win_rate)/avg_win_loss_ratio",
+        "Apply adaptive_kelly = kelly_fraction * multiplier (0.3-0.7 range)",
+        "Apply confidence_factor based on signal confidence",
+        "Apply volatility_factor based on ATR regime",
+        "Apply drawdown_factor based on current drawdown",
+        "Return position size respecting min_notional ($150)",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "Half-Kelly is more conservative than full Kelly"
+    },
+    {
+      "id": "US-020",
+      "title": "Adaptive Exposure Manager",
+      "description": "As a risk layer, I need dynamic exposure limits that adapt to market conditions",
+      "acceptanceCriteria": [
+        "Create src/risk/adaptive_exposure.py with adaptive limits",
+        "Base limits: per_trade (10%), per_pair (25%), total (80%)",
+        "Apply volatility_factor (0.6-1.3x) based on ATR",
+        "Apply regime_factor (0.7-1.2x) based on market regime",
+        "Apply drawdown_factor (0.5-1.0x) based on current drawdown",
+        "Apply concentration_factor (0.7-1.2x) based on position count",
+        "Return adapted limits for validation",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "Layer 3 risk control - adaptive exposure"
+    },
+    {
+      "id": "US-021",
+      "title": "Risk Manager with Multi-Layer Validation",
+      "description": "As a risk layer, I need comprehensive order validation before execution",
+      "acceptanceCriteria": [
+        "Create src/risk/risk_manager.py with RiskManager class",
+        "Implement validate_order() that runs all risk checks",
+        "Check 1: Close orders always bypass (safety first)",
+        "Check 2: Exposure limits (per-trade, per-pair, total)",
+        "Check 3: Drawdown limits (daily 5-7%, total 15%)",
+        "Check 4: Leverage validation (max 20x)",
+        "Check 5: Never add to losers check",
+        "Return RiskCheck result with allowed flag and reason",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "Central risk validation gate"
+    },
+    {
+      "id": "US-022",
+      "title": "Exit Manager with Multi-Level Take Profit",
+      "description": "As a strategy layer, I need sophisticated exit management with multiple TP levels and trailing stops",
+      "acceptanceCriteria": [
+        "Create src/strategy/exit_manager.py with ExitManager class",
+        "Implement 3-level take profit: TP1 (40% @ 1.5x ATR), TP2 (35% @ 2.5x ATR), TP3 (25% trailing)",
+        "Implement trailing stop: initial 2.0x ATR, trail 1.5x ATR, BE+0.3x buffer after TP1",
+        "Implement time-based exits: max 24-96 hours (adaptive)",
+        "Apply regime multipliers: trending (1.25x wider), ranging (0.8x tighter), high_vol (2.0x wider)",
+        "Calculate exit prices based on ATR and regime",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "Sophisticated exit strategy"
+    },
+    {
+      "id": "US-023",
+      "title": "Signal Processor with Filters",
+      "description": "As a strategy layer, I need to filter and scale signals before execution",
+      "acceptanceCriteria": [
+        "Create src/execution/signal_processor.py with signal filtering",
+        "Implement RSI extreme filter (RSI < 30 blocks SHORT, RSI > 70 blocks LONG)",
+        "Implement ADX saturation filter (ADX > 95 or ADX < 10 blocks)",
+        "Implement regime alignment (counter-trend scales to 40%)",
+        "Implement MTF misalignment (4H trend opposes scales to 50%)",
+        "Implement model agreement filter (< 25% agreement = HOLD)",
+        "Implement reversal detection override",
+        "Calculate final position scale (cumulative, minimum 5%)",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "Layer 1 risk control - signal quality"
+    },
+    {
+      "id": "US-024",
+      "title": "Order Manager with Execution",
+      "description": "As an execution layer, I need to manage order lifecycle from signal to fill",
+      "acceptanceCriteria": [
+        "Create src/execution/order_manager.py with OrderManager class",
+        "Implement pre-trade slippage estimation from orderbook",
+        "Select order type: market (urgent), limit (wide spread), split+TWAP (large)",
+        "Set leverage before order (skip if position exists)",
+        "Place preset stop-loss and take-profit with order",
+        "Execute main order through REST client",
+        "Track fill status and actual slippage",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "Order execution with optimization"
+    },
+    {
+      "id": "US-025",
+      "title": "Position Sync with Exchange",
+      "description": "As an execution layer, I need to synchronize local state with exchange positions",
+      "acceptanceCriteria": [
+        "Create src/execution/position_sync.py with PositionSync class",
+        "Implement periodic position sync (every 60 seconds)",
+        "Detect orphan positions (local != exchange)",
+        "Reconcile discrepancies with exchange as source of truth",
+        "Manage exchange-side stop-loss orders",
+        "Manage exchange-side take-profit orders",
+        "Process exit conditions from exit manager",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "Exchange reconciliation"
+    },
+    {
+      "id": "US-026",
+      "title": "AI Logger for Trade Explanations",
+      "description": "As a competition requirement, I need to log AI explanations for every trade decision",
+      "acceptanceCriteria": [
+        "Create src/execution/ai_logger.py with AILogger class",
+        "Log full trade decision context: signal, confidence, weighted_average",
+        "Log model outputs for each of 4 models",
+        "Log current market regime and risk checks",
+        "Generate human-readable reasoning string",
+        "Save to ai_logs/ directory with order ID",
+        "Upload to database for competition submission",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "WEEX competition requirement"
+    },
+    {
+      "id": "US-027",
+      "title": "Utility Modules (Fee Calculator & Drift Detector)",
+      "description": "As supporting infrastructure, I need utility modules for fee calculation and statistical drift detection",
+      "acceptanceCriteria": [
+        "Create src/utils/fee_calculator.py with fee calculations",
+        "Implement maker/taker fee calculation based on WEEX fee schedule",
+        "Implement funding_impact for perpetual positions",
+        "Implement breakeven_move calculation including fees",
+        "Create src/utils/drift_detector.py with statistical methods",
+        "Implement PSI calculation between distributions",
+        "Implement KS-test wrapper",
+        "Implement CUSUM calculation",
+        "Implement Z-score calculation",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "Supporting utilities"
+    },
+    {
+      "id": "US-028",
+      "title": "Main Entry Point with Trading Loop",
+      "description": "As a trading bot, I need a main entry point that orchestrates all components in the trading loop",
+      "acceptanceCriteria": [
+        "Create main.py as entry point",
+        "Initialize all components with proper dependency injection",
+        "Implement main trading loop: data -> features -> ML -> strategy -> risk -> execution",
+        "Handle WebSocket data events",
+        "Handle periodic tasks (position sync, model reload, stats)",
+        "Implement graceful shutdown on SIGINT/SIGTERM",
+        "Add comprehensive logging throughout",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "Ties everything together"
+    },
+    {
+      "id": "US-029",
+      "title": "Integration Tests for Full Pipeline",
+      "description": "As a quality assurance measure, I need integration tests for the complete trading pipeline",
+      "acceptanceCriteria": [
+        "Create tests/integration/test_pipeline.py",
+        "Test data flow: WebSocket -> Gateway -> Features -> ML -> Strategy",
+        "Test risk validation with various scenarios",
+        "Test order execution flow (mocked exchange)",
+        "Test position sync reconciliation",
+        "Test model retraining trigger",
+        "All integration tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "End-to-end validation"
+    },
+    {
+      "id": "US-030",
+      "title": "Systemd Service & Deployment Configuration",
+      "description": "As an operator, I need deployment configuration for production running",
+      "acceptanceCriteria": [
+        "Create scripts/alphastrike.service for systemd",
+        "Create scripts/deploy.sh for deployment automation",
+        "Create scripts/monitor.sh for health monitoring",
+        "Create pyproject.toml with all dependencies",
+        "Document deployment steps in README.md",
+        "Verify system starts and runs without errors",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": "Production deployment"
+    }
+  ]
+}
