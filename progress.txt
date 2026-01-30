@@ -107,3 +107,28 @@ RF_WEIGHT = 0.20
   - Use asyncio.Lock for thread safety with single connection
   - Use timedelta for date arithmetic, not direct day subtraction
 ---
+
+## 2026-01-30 - US-003: WEEX REST Client for Account & Orders
+- Implemented src/data/rest_client.py with async aiohttp
+- Created HMAC-SHA256 signature generation for WEEX API
+- Implemented all account, order, leverage, and market data methods
+- Added rate limiting tracking and exponential backoff retry
+- **Files changed:** src/data/rest_client.py
+- **Learnings:**
+  - WEEX wraps responses in {"code": "00000", "data": {...}}
+  - Use asyncio.Lock for thread safety on rate limit tracking
+  - Always use local variable for type narrowing after None check
+---
+
+## 2026-01-30 - US-004: WEEX WebSocket Client for Real-Time Data
+- Implemented src/data/websocket_client.py with websockets library
+- Created connection state machine with auto-reconnection
+- Implemented subscription management for candle, ticker, orderbook, trade channels
+- Added heartbeat/ping handling with 25s interval
+- **Files changed:** src/data/websocket_client.py
+- **Learnings:**
+  - websockets 12+ uses ClientConnection not WebSocketClientProtocol
+  - recv() returns Data (str|bytes), need to handle bytes case
+  - Use callback pattern for real-time data handlers
+  - Track subscriptions for automatic resubscription after reconnect
+---

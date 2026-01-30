@@ -72,7 +72,7 @@
         "Typecheck passes"
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Critical path for real-time data"
     },
     {
