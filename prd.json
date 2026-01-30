@@ -38,7 +38,7 @@
         "Typecheck passes"
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Required by all components that need persistence"
     },
     {

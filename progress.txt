@@ -92,3 +92,18 @@ RF_WEIGHT = 0.20
   - lru_cache on get_settings() prevents repeated parsing
   - Always validate ML weights sum to 1.0 as post-init check
 ---
+
+## 2026-01-30 - US-002: Database Layer with SQLite
+- Implemented src/data/database.py with async SQLite using aiosqlite
+- Created 5 tables: candles, trades, ai_log_uploads, training_cache, performance_metrics
+- Created dataclasses: Candle (frozen), Trade, AILogEntry (frozen), PerformanceMetric (frozen)
+- Added enums: TradeSide (LONG/SHORT), TradeStatus (pending/open/closed/etc.)
+- Implemented full CRUD operations for all tables
+- **Files changed:** src/data/database.py, tests/unit/test_database.py
+- **Learnings:**
+  - Use `aiosqlite.Row` as row_factory for dict-like access
+  - Use `INSERT OR REPLACE` for upsert behavior with UNIQUE constraints
+  - Use `PRAGMA journal_mode=WAL` for better concurrent access
+  - Use asyncio.Lock for thread safety with single connection
+  - Use timedelta for date arithmetic, not direct day subtraction
+---
