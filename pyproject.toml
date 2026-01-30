@@ -19,6 +19,7 @@ dependencies = [
     "xgboost>=2.0.0",
     "lightgbm>=4.0.0",
     "scikit-learn>=1.4.0",
+    "scipy>=1.11.0",
 
     # ML - Deep Learning
     "torch>=2.1.0",
