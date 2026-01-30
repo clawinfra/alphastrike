@@ -91,7 +91,7 @@
         "Typecheck passes"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Layer 0 risk control - data quality"
     },
     {
@@ -111,7 +111,7 @@
         "Typecheck passes"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "35 of 86 canonical features"
     },
     {
@@ -129,7 +129,7 @@
         "Typecheck passes"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "7 of 86 canonical features"
     },
     {
@@ -147,7 +147,7 @@
         "Typecheck passes"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Combines all feature modules into unified output"
     },
     {
@@ -166,7 +166,7 @@
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "Layer 0.5 risk control - feature quality"
     },
     {
