@@ -22,7 +22,7 @@
         "Typecheck passes with pyright/mypy"
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "Foundation module - all other modules depend on this"
     },
     {

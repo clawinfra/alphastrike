@@ -77,6 +77,18 @@ RF_WEIGHT = 0.20
 
 ## Progress Log
 
-(Progress entries will be added as stories are completed)
-
+## 2026-01-30 - US-001: Core Configuration & Settings Module
+- Implemented src/core/config.py with comprehensive Pydantic Settings
+- Created nested config classes: TradingThresholds, PositionSizingConfig, RiskControlConfig,
+  TradeFrequencyConfig, MLConfig, ConfidenceFilterConfig, FeatureValidationConfig,
+  DataGatewayConfig, ExchangeConfig, LoggingConfig
+- Added TradingPair and MarketRegime enums
+- Created .env.example with all environment variables
+- Implemented get_settings() with LRU caching and reload_settings()
+- **Files changed:** src/core/config.py, .env.example
+- **Learnings:**
+  - Use Field() with ge/le/gt validators for numeric bounds
+  - Use SettingsConfigDict(env_prefix="PREFIX_") for nested config loading
+  - lru_cache on get_settings() prevents repeated parsing
+  - Always validate ML weights sum to 1.0 as post-init check
 ---
