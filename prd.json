@@ -183,7 +183,7 @@
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "30% of ensemble weight"
     },
     {
@@ -200,7 +200,7 @@
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "25% of ensemble weight - prone to degenerate trees issue"
     },
     {
@@ -217,7 +217,7 @@
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "25% of ensemble weight - PyTorch"
     },
     {
@@ -233,7 +233,7 @@
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "20% of ensemble weight - robust to outliers"
     },
     {
@@ -251,7 +251,7 @@
         "Typecheck passes"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "Core ML prediction layer"
     },
     {
@@ -271,7 +271,7 @@
         "Typecheck passes"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "Layer 0.75 risk control - prediction quality"
     },
     {
@@ -290,7 +290,7 @@
         "Typecheck passes"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "Self-healing model management"
     },
     {
