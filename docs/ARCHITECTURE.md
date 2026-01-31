@@ -1,6 +1,6 @@
 # AlphaStrike Trading Bot - Architecture Document
 
-**Version:** 2.0
+**Version:** 2.2
 **Last Updated:** January 2026
 **Status:** Production
 
@@ -516,12 +516,96 @@ elif signal == 'SHORT':
 
 **Training Pipeline:**
 ```
-Data Collection → Feature Engineering → Label Generation →
+Trigger Detection → Data Collection → Feature Engineering → Label Generation →
 Training → Validation → Model Export → Hot Reload
 ```
 
+**Trigger-Based Retraining (NOT time-interval based):**
+
+The trainer uses intelligent triggers instead of fixed time intervals. Key insight: During high volatility, data is noisy - training on noise = overfitting to noise.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                  TRIGGER-BASED RETRAINING                        │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│   check_triggers() called periodically                          │
+│           │                                                      │
+│           ▼                                                      │
+│   ┌─────────────────┐                                           │
+│   │ High Volatility │──► SUPPRESS retraining                    │
+│   │   (ATR > 2.0)   │    Use VolatilityAdjustment instead       │
+│   └─────────────────┘                                           │
+│           │                                                      │
+│           ▼                                                      │
+│   ┌─────────────────┐                                           │
+│   │ Check Cooldown  │──► If not elapsed, return None            │
+│   └─────────────────┘                                           │
+│           │                                                      │
+│           ▼                                                      │
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │ Priority 1: REGIME_CHANGE (5 min stability required)   │   │
+│   │ Priority 2: MODEL_HEALTH_DEGRADED (2 consecutive)      │   │
+│   │ Priority 3: FEATURE_DRIFT (PSI > 0.25 for 10+ min)     │   │
+│   │ Priority 4: VALIDATION_ACCURACY_DROP (< 52% for 15 min)│   │
+│   └─────────────────────────────────────────────────────────┘   │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Retraining Triggers:**
+
+| Trigger | Condition | Persistence | Priority |
+|---------|-----------|-------------|----------|
+| REGIME_CHANGE | Market regime changed | 5 minutes stable | 1 (highest) |
+| MODEL_HEALTH_DEGRADED | Majority models unhealthy | 2 consecutive checks | 2 |
+| FEATURE_DRIFT | PSI > 0.25 | 10+ minutes | 3 |
+| VALIDATION_ACCURACY_DROP | Accuracy < 52% | 15+ minutes | 4 |
+| MANUAL | Operator request | Immediate | - |
+| INITIAL | First run | Immediate | - |
+
+**Volatility Adjustment (Use Instead of Retraining):**
+
+During high volatility, adjust trading parameters rather than retraining on noisy data:
+
+| ATR Ratio | Confidence Multiplier | Position Scale | Action |
+|-----------|----------------------|----------------|--------|
+| ≥ 3.0 (Extreme) | 1.5x | 0.25x | Minimal trading |
+| ≥ 2.0 (High) | 1.25x | 0.50x | Reduced trading |
+| ≥ 1.5 (Elevated) | 1.1x | 0.75x | Slightly reduced |
+| < 1.5 (Normal) | 1.0x | 1.0x | Normal trading |
+
+**Adaptive Cooldown (Inverted Logic):**
+
+| Volatility | Cooldown | Rationale |
+|------------|----------|-----------|
+| Low (< 1.0) | 120 min | Data stable, no rush to retrain |
+| Normal (1.0-2.0) | 75 min | Moderate cooldown |
+| Post high-vol | 30 min | Capture new regime quickly |
+
+**Key Classes:**
+```python
+class RetrainingTrigger(Enum):
+    REGIME_CHANGE = "regime_change"
+    MODEL_HEALTH_DEGRADED = "model_health_degraded"
+    FEATURE_DRIFT = "feature_drift"
+    VALIDATION_ACCURACY_DROP = "validation_accuracy_drop"
+    MANUAL = "manual"
+    INITIAL = "initial"
+
+class VolatilityAdjustment:
+    confidence_multiplier: float  # Raise thresholds
+    position_scale: float         # Reduce sizes
+    should_trade: bool            # Trade at all?
+
+class ModelTrainer:
+    def check_triggers(...) -> RetrainingTrigger | None
+    def get_volatility_adjustment(volatility: float) -> VolatilityAdjustment
+    async def train_all_models(trigger: RetrainingTrigger) -> TrainingReport
+```
+
 **Key Parameters:**
-- Retraining interval: 13-90 minutes (volatility-adaptive)
+- Cooldown: 30-120 minutes (inverted volatility-adaptive)
 - Training samples: 1000+ candles
 - Validation split: 20% out-of-sample
 - Label generation: 3-class (LONG/SHORT/HOLD)
@@ -1085,6 +1169,13 @@ Train/Val Split → Model Training → Validation → Model Export
 │                    TRAINING PIPELINE                             │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
+│  0. Trigger Detection (NEW)                                      │
+│     ├── Check regime change (5 min stability)                   │
+│     ├── Check model health (2 consecutive failures)             │
+│     ├── Check feature drift (PSI > 0.25 for 10 min)             │
+│     ├── Check accuracy drop (< 52% for 15 min)                  │
+│     └── SUPPRESS during high volatility (ATR > 2.0)             │
+│                                                                  │
 │  1. Data Collection                                              │
 │     └── Fetch 1000+ candles from database                       │
 │                                                                  │
@@ -1112,8 +1203,65 @@ Train/Val Split → Model Training → Validation → Model Export
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+**Why Trigger-Based Instead of Time-Based:**
+
+| Approach | Problem | Result |
+|----------|---------|--------|
+| Time-based (old) | Retrains during high volatility | Training on noisy data = overfitting |
+| Trigger-based (new) | Only retrains on meaningful events | Cleaner models, less churn |
+
+During high volatility, the 0.5% label threshold becomes statistical noise when markets move 5%+ daily. Instead of retraining, we use `VolatilityAdjustment` to reduce position sizes and raise confidence thresholds.
+
 ### 5.2 Self-Healing Flow
 
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    SELF-HEALING FLOW                             │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Periodic Check (every minute)                                   │
+│         │                                                        │
+│         ▼                                                        │
+│  ┌──────────────────┐                                           │
+│  │ Volatility Check │                                           │
+│  │   ATR > 2.0?     │                                           │
+│  └────────┬─────────┘                                           │
+│           │                                                      │
+│      ┌────┴────┐                                                │
+│      │         │                                                │
+│    HIGH       NORMAL                                            │
+│      │         │                                                │
+│      ▼         ▼                                                │
+│  ┌────────┐ ┌──────────────────┐                               │
+│  │ Apply  │ │ Check Triggers   │                               │
+│  │ Vol    │ │                  │                               │
+│  │ Adjust │ │ • Regime change? │                               │
+│  │ ments  │ │ • Health failed? │                               │
+│  │        │ │ • Drift > 0.25?  │                               │
+│  │ • ↑ conf│ │ • Accuracy < 52%│                               │
+│  │ • ↓ size│ └────────┬────────┘                               │
+│  └────────┘          │                                          │
+│                 ┌────┴────┐                                     │
+│                 │         │                                     │
+│            No Trigger   Trigger                                 │
+│                 │         │                                     │
+│                 ▼         ▼                                     │
+│             Continue   ┌─────────────────┐                     │
+│             Trading    │ Retrain Models  │                     │
+│                        │ (with trigger   │                     │
+│                        │  reason logged) │                     │
+│                        └────────┬────────┘                     │
+│                                 │                               │
+│                                 ▼                               │
+│                        ┌─────────────────┐                     │
+│                        │ Hot Reload to   │                     │
+│                        │ Ensemble        │                     │
+│                        └─────────────────┘                     │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Model Health Check (Per Prediction):**
 ```
 Prediction Request
        │
@@ -1131,15 +1279,16 @@ Prediction Request
     ▼         ▼
  Normal   Increment Counter
     │         │
-    │    Counter >= 50?
+    │    Counter >= 2? (consecutive)
     │         │
     │    ┌────┴────┐
     │    │         │
     │   No       Yes
     │    │         │
     │    ▼         ▼
-    │ Redistribute Delete Model
-    │   Weights   Signal Retrain
+    │ Redistribute  Trigger:
+    │   Weights    MODEL_HEALTH_DEGRADED
+    │              (retrain at next check)
     │              │
     └──────────────┘
 ```
@@ -1482,3 +1631,8 @@ alphastrike/
 - v1.0 (December 2025): Initial architecture
 - v2.0 (January 2026): Updated based on production learnings
 - v2.1 (January 2026): Added Prediction Confidence Bounds (Section 3.3.4)
+- v2.2 (January 2026): Refactored to Trigger-Based Retraining (Section 3.3.3, 5.1, 5.2)
+  - Replaced time-interval retraining with trigger-based approach
+  - Added VolatilityAdjustment for high-vol periods (adjust trading, not training)
+  - Inverted cooldown logic (longer during calm, shorter after vol subsides)
+  - Four retraining triggers: regime_change, model_health_degraded, feature_drift, validation_accuracy_drop
