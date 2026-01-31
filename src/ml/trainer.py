@@ -1,20 +1,22 @@
 """
-AlphaStrike Trading Bot - Model Trainer with Auto-Retraining (US-016)
+AlphaStrike Trading Bot - Model Trainer with Trigger-Based Retraining
 
-Provides automated training pipeline for all ML models with:
-- Data collection from database (1000+ candles)
-- Feature calculation using FeaturePipeline
-- 3-class label generation (LONG/SHORT/HOLD)
-- Balanced sampling for equal class distribution
-- Time-ordered train/validation split (80/20)
-- Out-of-sample validation
-- Model persistence with timestamps
-- Dynamic retraining intervals based on volatility
-- Signal hot reload to ensemble
+Provides automated training pipeline for all ML models with trigger-based
+retraining instead of time-interval based. Retraining is triggered by:
+
+1. Regime change detection (market structure changed)
+2. Model health degradation (degenerate predictions)
+3. Feature drift above threshold (input distribution shifted)
+4. Validation accuracy drop (model performance degraded)
+
+Key insight: During high volatility, we REDUCE position sizes and RAISE
+confidence thresholds rather than retraining on noisy data.
 
 Features:
 - Trains all 4 models (XGBoost, LightGBM, LSTM, RandomForest)
-- Adaptive retraining interval (13-90 minutes based on volatility)
+- Trigger-based retraining (not time-based)
+- Cooldown period to prevent excessive retraining
+- Volatility-aware confidence adjustment
 - Comprehensive training reports
 """
 
@@ -24,14 +26,15 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
+from enum import Enum
 from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
 from numpy.typing import NDArray
 
-from src.core.config import get_settings
+from src.core.config import MarketRegime, get_settings
 from src.data.database import Candle, Database
 from src.features.pipeline import FeaturePipeline
 from src.ml.lightgbm_model import LightGBMConfig, LightGBMModel
@@ -57,13 +60,121 @@ LABEL_THRESHOLD = 0.005
 # Minimum samples for training
 MIN_TRAINING_SAMPLES = 1000
 
-# Retraining interval bounds (minutes)
-RETRAINING_INTERVAL_MIN = 13
-RETRAINING_INTERVAL_MAX = 90
+# Cooldown between retraining (prevents excessive retraining)
+MIN_RETRAIN_COOLDOWN_MINUTES = 30
+MAX_RETRAIN_COOLDOWN_MINUTES = 120
 
-# ATR ratio thresholds for volatility classification
+# Trigger thresholds
+REGIME_CHANGE_CONFIDENCE_MIN = 0.6  # Minimum confidence for regime change trigger
+FEATURE_DRIFT_THRESHOLD = 0.25  # PSI threshold for drift trigger
+MODEL_HEALTH_CHECK_FAILURES_THRESHOLD = 2  # Consecutive failures before trigger
+VALIDATION_ACCURACY_MIN = 0.52  # Minimum accuracy before trigger (above random)
+
+# Volatility thresholds
 ATR_RATIO_HIGH = 2.0
-ATR_RATIO_LOW = 1.0
+ATR_RATIO_EXTREME = 3.0
+
+
+# =============================================================================
+# Trigger System
+# =============================================================================
+
+
+class RetrainingTrigger(Enum):
+    """Types of events that can trigger model retraining."""
+
+    REGIME_CHANGE = "regime_change"
+    MODEL_HEALTH_DEGRADED = "model_health_degraded"
+    FEATURE_DRIFT = "feature_drift"
+    VALIDATION_ACCURACY_DROP = "validation_accuracy_drop"
+    MANUAL = "manual"
+    INITIAL = "initial"
+
+
+@dataclass
+class TriggerState:
+    """
+    State tracking for retraining triggers.
+
+    Tracks the conditions that determine when retraining should occur.
+    """
+
+    # Regime tracking
+    last_regime: MarketRegime | None = None
+    regime_stable_since: datetime | None = None
+
+    # Model health tracking
+    consecutive_health_failures: int = 0
+    last_health_check: datetime | None = None
+
+    # Feature drift tracking
+    last_drift_score: float = 0.0
+    drift_above_threshold_since: datetime | None = None
+
+    # Validation tracking
+    last_validation_accuracy: float = 0.5
+    accuracy_below_threshold_since: datetime | None = None
+
+    # Volatility tracking
+    current_volatility: float = 1.0
+    in_high_volatility_mode: bool = False
+
+    # Cooldown tracking
+    last_retrain_time: datetime | None = None
+    last_trigger: RetrainingTrigger | None = None
+
+
+@dataclass
+class VolatilityAdjustment:
+    """
+    Adjustments to apply during high volatility periods.
+
+    Instead of retraining on noisy data, we adjust trading parameters.
+    """
+
+    confidence_multiplier: float = 1.0  # Multiply confidence thresholds
+    position_scale: float = 1.0  # Scale down position sizes
+    should_trade: bool = True  # Whether to trade at all
+
+    @classmethod
+    def for_volatility(cls, atr_ratio: float) -> VolatilityAdjustment:
+        """
+        Calculate adjustments based on current volatility.
+
+        Args:
+            atr_ratio: Current ATR ratio (1.0 = normal)
+
+        Returns:
+            VolatilityAdjustment with appropriate scaling
+        """
+        if atr_ratio >= ATR_RATIO_EXTREME:
+            # Extreme volatility: minimal trading
+            return cls(
+                confidence_multiplier=1.5,  # 50% higher confidence required
+                position_scale=0.25,  # 25% of normal size
+                should_trade=True,  # Still trade but very conservatively
+            )
+        elif atr_ratio >= ATR_RATIO_HIGH:
+            # High volatility: reduced trading
+            return cls(
+                confidence_multiplier=1.25,  # 25% higher confidence required
+                position_scale=0.5,  # 50% of normal size
+                should_trade=True,
+            )
+        elif atr_ratio >= 1.5:
+            # Elevated volatility: slightly reduced
+            return cls(
+                confidence_multiplier=1.1,
+                position_scale=0.75,
+                should_trade=True,
+            )
+        else:
+            # Normal or low volatility: no adjustment
+            return cls(
+                confidence_multiplier=1.0,
+                position_scale=1.0,
+                should_trade=True,
+            )
 
 
 # =============================================================================
@@ -80,6 +191,7 @@ class TrainingReport:
     validation_accuracy: dict[str, float]
     training_time_seconds: float
     timestamp: datetime
+    trigger: RetrainingTrigger
     samples_used: int = 0
     class_distribution: dict[str, int] = field(default_factory=dict)
     feature_count: int = 0
@@ -94,6 +206,7 @@ class TrainingReport:
             "validation_accuracy": self.validation_accuracy,
             "training_time_seconds": self.training_time_seconds,
             "timestamp": self.timestamp.isoformat(),
+            "trigger": self.trigger.value,
             "samples_used": self.samples_used,
             "class_distribution": self.class_distribution,
             "feature_count": self.feature_count,
@@ -120,24 +233,34 @@ class ModelInfo:
 
 class ModelTrainer:
     """
-    Trainer for all ML models in the AlphaStrike ensemble.
+    Trainer for all ML models with trigger-based retraining.
 
-    Handles the complete training pipeline:
-    1. Data collection from database (1000+ candles)
-    2. Feature calculation using FeaturePipeline
-    3. Label generation (3-class: LONG/SHORT/HOLD)
-    4. Balanced sampling for equal class distribution
-    5. Time-ordered train/validation split (80/20)
-    6. Train all 4 models
-    7. Out-of-sample validation
-    8. Save models with timestamps
-    9. Signal hot reload to ensemble
+    Key principle: During high volatility, we adjust trading parameters
+    (reduce size, raise confidence) rather than retraining on noisy data.
+
+    Retraining is triggered by:
+    1. Regime change detection - market structure fundamentally changed
+    2. Model health degradation - models producing degenerate predictions
+    3. Feature drift - input distribution shifted significantly
+    4. Validation accuracy drop - models underperforming
 
     Usage:
         trainer = ModelTrainer(database=db)
-        report = await trainer.train_all_models()
-        if report.success:
-            print(f"Trained {len(report.models_trained)} models")
+
+        # Check if retraining needed (call periodically)
+        trigger = trainer.check_triggers(
+            current_regime=regime,
+            model_health_results=health,
+            drift_score=drift,
+            validation_accuracy=accuracy,
+            volatility=atr_ratio,
+        )
+
+        if trigger is not None:
+            report = await trainer.train_all_models(trigger=trigger)
+
+        # Get volatility adjustments (use instead of retraining during vol)
+        adjustment = trainer.get_volatility_adjustment(atr_ratio)
     """
 
     def __init__(
@@ -171,17 +294,255 @@ class ModelTrainer:
         self._lstm: LSTMModel | None = None
         self._random_forest: RandomForestModel | None = None
 
-        # Training state
-        self._last_training_time: datetime | None = None
-        self._current_retraining_interval: int = 60  # Default 60 minutes
+        # Trigger state tracking
+        self._trigger_state = TriggerState()
 
         logger.info(
-            "ModelTrainer initialized",
+            "ModelTrainer initialized with trigger-based retraining",
             extra={"models_dir": str(self.models_dir)},
         )
 
+    def check_triggers(
+        self,
+        current_regime: MarketRegime,
+        model_health_results: dict[str, bool],
+        drift_score: float,
+        validation_accuracy: float,
+        volatility: float,
+    ) -> RetrainingTrigger | None:
+        """
+        Check all retraining triggers and return the highest priority one.
+
+        This method should be called periodically (e.g., every minute).
+        It does NOT trigger retraining during high volatility - instead,
+        use get_volatility_adjustment() to adjust trading parameters.
+
+        Args:
+            current_regime: Current detected market regime
+            model_health_results: Dict of model name -> health status
+            drift_score: Current feature drift score (PSI)
+            validation_accuracy: Recent out-of-sample accuracy
+            volatility: Current ATR ratio
+
+        Returns:
+            RetrainingTrigger if retraining should occur, None otherwise
+        """
+        now = datetime.utcnow()
+
+        # Update volatility state
+        self._trigger_state.current_volatility = volatility
+        self._trigger_state.in_high_volatility_mode = volatility >= ATR_RATIO_HIGH
+
+        # Check cooldown first
+        if not self._cooldown_elapsed(volatility):
+            return None
+
+        # During high volatility, suppress retraining
+        # (we use volatility adjustments instead)
+        if volatility >= ATR_RATIO_HIGH:
+            logger.debug(
+                "Suppressing retraining triggers during high volatility",
+                extra={"volatility": volatility, "threshold": ATR_RATIO_HIGH},
+            )
+            return None
+
+        # Priority 1: Regime change (highest priority)
+        regime_trigger = self._check_regime_change_trigger(current_regime, now)
+        if regime_trigger:
+            return regime_trigger
+
+        # Priority 2: Model health degradation
+        health_trigger = self._check_model_health_trigger(model_health_results, now)
+        if health_trigger:
+            return health_trigger
+
+        # Priority 3: Feature drift
+        drift_trigger = self._check_feature_drift_trigger(drift_score, now)
+        if drift_trigger:
+            return drift_trigger
+
+        # Priority 4: Validation accuracy drop
+        accuracy_trigger = self._check_accuracy_trigger(validation_accuracy, now)
+        if accuracy_trigger:
+            return accuracy_trigger
+
+        return None
+
+    def _cooldown_elapsed(self, volatility: float) -> bool:
+        """
+        Check if cooldown period has elapsed since last retraining.
+
+        Cooldown is LONGER during low volatility (clean data, less urgent)
+        and SHORTER after volatility subsides (need to capture new regime).
+
+        Args:
+            volatility: Current ATR ratio
+
+        Returns:
+            True if cooldown has elapsed
+        """
+        if self._trigger_state.last_retrain_time is None:
+            return True
+
+        # Adaptive cooldown: longer during calm markets, shorter after vol
+        if volatility < 1.0:
+            # Low volatility: longer cooldown (data is stable)
+            cooldown_minutes = MAX_RETRAIN_COOLDOWN_MINUTES
+        elif volatility < ATR_RATIO_HIGH:
+            # Normal volatility: moderate cooldown
+            cooldown_minutes = (MIN_RETRAIN_COOLDOWN_MINUTES + MAX_RETRAIN_COOLDOWN_MINUTES) // 2
+        else:
+            # Post high-volatility: shorter cooldown when vol subsides
+            cooldown_minutes = MIN_RETRAIN_COOLDOWN_MINUTES
+
+        elapsed = datetime.utcnow() - self._trigger_state.last_retrain_time
+        return elapsed >= timedelta(minutes=cooldown_minutes)
+
+    def _check_regime_change_trigger(
+        self, current_regime: MarketRegime, now: datetime
+    ) -> RetrainingTrigger | None:
+        """Check if regime change should trigger retraining."""
+        last_regime = self._trigger_state.last_regime
+
+        if last_regime is None:
+            # First regime detection, don't trigger
+            self._trigger_state.last_regime = current_regime
+            self._trigger_state.regime_stable_since = now
+            return None
+
+        if current_regime != last_regime:
+            # Regime changed - require it to be stable for 5+ minutes
+            if self._trigger_state.regime_stable_since is None:
+                self._trigger_state.regime_stable_since = now
+
+            # Wait for regime to stabilize (avoid false triggers)
+            stability_duration = now - self._trigger_state.regime_stable_since
+            if stability_duration >= timedelta(minutes=5):
+                logger.info(
+                    "Regime change trigger activated",
+                    extra={
+                        "old_regime": last_regime.value,
+                        "new_regime": current_regime.value,
+                        "stable_for": str(stability_duration),
+                    },
+                )
+                self._trigger_state.last_regime = current_regime
+                self._trigger_state.regime_stable_since = now
+                return RetrainingTrigger.REGIME_CHANGE
+        else:
+            # Same regime, reset stability tracking
+            self._trigger_state.regime_stable_since = now
+
+        return None
+
+    def _check_model_health_trigger(
+        self, health_results: dict[str, bool], now: datetime
+    ) -> RetrainingTrigger | None:
+        """Check if model health degradation should trigger retraining."""
+        self._trigger_state.last_health_check = now
+
+        # Count unhealthy models
+        unhealthy_count = sum(1 for healthy in health_results.values() if not healthy)
+        total_models = len(health_results)
+
+        if total_models == 0:
+            return None
+
+        # Trigger if majority of models are unhealthy
+        if unhealthy_count >= (total_models // 2 + 1):
+            self._trigger_state.consecutive_health_failures += 1
+
+            if self._trigger_state.consecutive_health_failures >= MODEL_HEALTH_CHECK_FAILURES_THRESHOLD:
+                logger.info(
+                    "Model health trigger activated",
+                    extra={
+                        "unhealthy_count": unhealthy_count,
+                        "total_models": total_models,
+                        "consecutive_failures": self._trigger_state.consecutive_health_failures,
+                    },
+                )
+                self._trigger_state.consecutive_health_failures = 0
+                return RetrainingTrigger.MODEL_HEALTH_DEGRADED
+        else:
+            # Reset consecutive failures if models recovered
+            self._trigger_state.consecutive_health_failures = 0
+
+        return None
+
+    def _check_feature_drift_trigger(
+        self, drift_score: float, now: datetime
+    ) -> RetrainingTrigger | None:
+        """Check if feature drift should trigger retraining."""
+        self._trigger_state.last_drift_score = drift_score
+
+        if drift_score >= FEATURE_DRIFT_THRESHOLD:
+            if self._trigger_state.drift_above_threshold_since is None:
+                self._trigger_state.drift_above_threshold_since = now
+
+            # Require drift to persist for 10+ minutes (avoid transient spikes)
+            drift_duration = now - self._trigger_state.drift_above_threshold_since
+            if drift_duration >= timedelta(minutes=10):
+                logger.info(
+                    "Feature drift trigger activated",
+                    extra={
+                        "drift_score": drift_score,
+                        "threshold": FEATURE_DRIFT_THRESHOLD,
+                        "duration": str(drift_duration),
+                    },
+                )
+                self._trigger_state.drift_above_threshold_since = None
+                return RetrainingTrigger.FEATURE_DRIFT
+        else:
+            self._trigger_state.drift_above_threshold_since = None
+
+        return None
+
+    def _check_accuracy_trigger(
+        self, validation_accuracy: float, now: datetime
+    ) -> RetrainingTrigger | None:
+        """Check if accuracy drop should trigger retraining."""
+        self._trigger_state.last_validation_accuracy = validation_accuracy
+
+        if validation_accuracy < VALIDATION_ACCURACY_MIN:
+            if self._trigger_state.accuracy_below_threshold_since is None:
+                self._trigger_state.accuracy_below_threshold_since = now
+
+            # Require low accuracy to persist for 15+ minutes
+            low_accuracy_duration = now - self._trigger_state.accuracy_below_threshold_since
+            if low_accuracy_duration >= timedelta(minutes=15):
+                logger.info(
+                    "Accuracy drop trigger activated",
+                    extra={
+                        "accuracy": validation_accuracy,
+                        "threshold": VALIDATION_ACCURACY_MIN,
+                        "duration": str(low_accuracy_duration),
+                    },
+                )
+                self._trigger_state.accuracy_below_threshold_since = None
+                return RetrainingTrigger.VALIDATION_ACCURACY_DROP
+        else:
+            self._trigger_state.accuracy_below_threshold_since = None
+
+        return None
+
+    def get_volatility_adjustment(self, volatility: float) -> VolatilityAdjustment:
+        """
+        Get trading adjustments for current volatility.
+
+        Use this instead of retraining during high volatility periods.
+        Reduces position sizes and raises confidence thresholds.
+
+        Args:
+            volatility: Current ATR ratio
+
+        Returns:
+            VolatilityAdjustment with scaling factors
+        """
+        return VolatilityAdjustment.for_volatility(volatility)
+
     async def train_all_models(
         self,
+        trigger: RetrainingTrigger = RetrainingTrigger.MANUAL,
         symbol: str = "cmt_btcusdt",
         min_candles: int = MIN_TRAINING_SAMPLES,
     ) -> TrainingReport:
@@ -189,6 +550,7 @@ class ModelTrainer:
         Train all models in the ensemble.
 
         Args:
+            trigger: What triggered this retraining
             symbol: Trading symbol to fetch candles for
             min_candles: Minimum number of candles required
 
@@ -197,6 +559,11 @@ class ModelTrainer:
         """
         start_time = time.time()
         timestamp = datetime.utcnow()
+
+        logger.info(
+            f"Starting model training triggered by {trigger.value}",
+            extra={"symbol": symbol, "min_candles": min_candles},
+        )
 
         try:
             # Step 1: Fetch candles from database
@@ -210,6 +577,7 @@ class ModelTrainer:
                     validation_accuracy={},
                     training_time_seconds=time.time() - start_time,
                     timestamp=timestamp,
+                    trigger=trigger,
                     error_message=f"Insufficient candles: {len(candles)} < {min_candles}",
                 )
 
@@ -224,6 +592,7 @@ class ModelTrainer:
                     validation_accuracy={},
                     training_time_seconds=time.time() - start_time,
                     timestamp=timestamp,
+                    trigger=trigger,
                     error_message=f"Insufficient feature samples: {X.shape[0]}",
                 )
 
@@ -303,14 +672,16 @@ class ModelTrainer:
                 logger.info("Signaling model hot reload to ensemble")
                 self.reload_callback()
 
-            # Update training state
-            self._last_training_time = timestamp
+            # Update trigger state
+            self._trigger_state.last_retrain_time = timestamp
+            self._trigger_state.last_trigger = trigger
 
             training_time = time.time() - start_time
 
             logger.info(
                 "Training completed successfully",
                 extra={
+                    "trigger": trigger.value,
                     "models_trained": models_trained,
                     "training_time": f"{training_time:.2f}s",
                     "validation_accuracy": validation_accuracy,
@@ -323,6 +694,7 @@ class ModelTrainer:
                 validation_accuracy=validation_accuracy,
                 training_time_seconds=training_time,
                 timestamp=timestamp,
+                trigger=trigger,
                 samples_used=len(X_balanced),
                 class_distribution=class_distribution,
                 feature_count=X.shape[1],
@@ -337,6 +709,7 @@ class ModelTrainer:
                 validation_accuracy={},
                 training_time_seconds=time.time() - start_time,
                 timestamp=timestamp,
+                trigger=trigger,
                 error_message=str(e),
             )
 
@@ -426,44 +799,6 @@ class ModelTrainer:
         )
 
         return X_balanced, y_balanced
-
-    def _calculate_retraining_interval(self, volatility: float) -> int:
-        """
-        Calculate retraining interval based on market volatility.
-
-        Uses ATR ratio to determine volatility level:
-        - High volatility (ATR ratio > 2.0): 13-30 minutes
-        - Normal volatility: 45-60 minutes
-        - Low volatility (ATR ratio < 1.0): 60-90 minutes
-
-        Args:
-            volatility: ATR ratio (current ATR / historical average ATR)
-
-        Returns:
-            Retraining interval in minutes (13-90)
-        """
-        if volatility > ATR_RATIO_HIGH:
-            # High volatility: shorter intervals (13-30 minutes)
-            # Scale linearly from 30 at ATR=2.0 to 13 at ATR=4.0+
-            interval = max(
-                RETRAINING_INTERVAL_MIN,
-                int(30 - (volatility - ATR_RATIO_HIGH) * (30 - RETRAINING_INTERVAL_MIN) / 2.0),
-            )
-        elif volatility < ATR_RATIO_LOW:
-            # Low volatility: longer intervals (60-90 minutes)
-            # Scale linearly from 60 at ATR=1.0 to 90 at ATR=0.5 or lower
-            interval = min(
-                RETRAINING_INTERVAL_MAX,
-                int(60 + (ATR_RATIO_LOW - volatility) * (RETRAINING_INTERVAL_MAX - 60) / 0.5),
-            )
-        else:
-            # Normal volatility: 45-60 minutes
-            # Linear interpolation between low and high thresholds
-            normalized = (volatility - ATR_RATIO_LOW) / (ATR_RATIO_HIGH - ATR_RATIO_LOW)
-            interval = int(60 - normalized * 15)  # 60 at low end, 45 at high end
-
-        self._current_retraining_interval = interval
-        return interval
 
     async def _fetch_candles(
         self, symbol: str, min_candles: int
@@ -690,33 +1025,50 @@ class ModelTrainer:
             logger.error(f"RandomForest training error: {e}", exc_info=True)
             return None, None
 
-    def should_retrain(self, volatility: float) -> bool:
+    def should_retrain(
+        self,
+        current_regime: MarketRegime,
+        model_health_results: dict[str, bool],
+        drift_score: float,
+        validation_accuracy: float,
+        volatility: float,
+    ) -> tuple[bool, RetrainingTrigger | None]:
         """
-        Check if models should be retrained based on interval.
+        Convenience method to check if retraining should occur.
 
         Args:
+            current_regime: Current detected market regime
+            model_health_results: Dict of model name -> health status
+            drift_score: Current feature drift score (PSI)
+            validation_accuracy: Recent out-of-sample accuracy
             volatility: Current ATR ratio
 
         Returns:
-            True if retraining is due
+            Tuple of (should_retrain, trigger) where trigger is the reason
         """
-        if self._last_training_time is None:
-            return True
-
-        interval_minutes = self._calculate_retraining_interval(volatility)
-        elapsed_minutes = (datetime.utcnow() - self._last_training_time).total_seconds() / 60
-
-        return elapsed_minutes >= interval_minutes
+        trigger = self.check_triggers(
+            current_regime=current_regime,
+            model_health_results=model_health_results,
+            drift_score=drift_score,
+            validation_accuracy=validation_accuracy,
+            volatility=volatility,
+        )
+        return (trigger is not None, trigger)
 
     @property
     def last_training_time(self) -> datetime | None:
         """Get last training timestamp."""
-        return self._last_training_time
+        return self._trigger_state.last_retrain_time
 
     @property
-    def current_retraining_interval(self) -> int:
-        """Get current retraining interval in minutes."""
-        return self._current_retraining_interval
+    def last_trigger(self) -> RetrainingTrigger | None:
+        """Get the trigger that caused the last retraining."""
+        return self._trigger_state.last_trigger
+
+    @property
+    def trigger_state(self) -> TriggerState:
+        """Get current trigger state for monitoring."""
+        return self._trigger_state
 
     def get_model(self, name: str) -> XGBoostModel | LightGBMModel | LSTMModel | RandomForestModel | None:
         """
