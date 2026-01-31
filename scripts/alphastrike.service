@@ -1,0 +1,64 @@
+# AlphaStrike Trading Bot - Systemd Service Unit
+# Install: sudo cp scripts/alphastrike.service /etc/systemd/system/
+# Enable:  sudo systemctl enable alphastrike
+# Start:   sudo systemctl start alphastrike
+# Status:  sudo systemctl status alphastrike
+# Logs:    journalctl -u alphastrike -f
+
+[Unit]
+Description=AlphaStrike Autonomous Trading Bot
+Documentation=https://github.com/yourusername/alphastrike_ai
+After=network-online.target
+Wants=network-online.target
+
+# Wait for network to be fully up
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=alphastrike
+Group=alphastrike
+
+# Working directory (adjust to your installation path)
+WorkingDirectory=/opt/alphastrike
+
+# Environment file for API credentials and configuration
+EnvironmentFile=/opt/alphastrike/.env
+
+# Python environment
+Environment="PATH=/opt/alphastrike/.venv/bin:/usr/local/bin:/usr/bin"
+Environment="PYTHONUNBUFFERED=1"
+Environment="PYTHONDONTWRITEBYTECODE=1"
+
+# Main command using uv
+ExecStart=/usr/local/bin/uv run python main.py
+
+# Restart policy with exponential backoff
+Restart=on-failure
+RestartSec=10
+RestartPreventExitStatus=0
+
+# Graceful shutdown timeout
+TimeoutStopSec=30
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/alphastrike/data /opt/alphastrike/logs /opt/alphastrike/ai_logs /opt/alphastrike/models
+
+# Resource limits
+MemoryMax=4G
+MemoryHigh=3G
+CPUQuota=200%
+TasksMax=100
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=alphastrike
+
+[Install]
+WantedBy=multi-user.target
