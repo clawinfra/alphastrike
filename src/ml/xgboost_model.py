@@ -51,6 +51,10 @@ class XGBoostConfig(BaseModel):
     reg_alpha: float = Field(default=0.1, ge=0.0, description="L1 regularization")
     reg_lambda: float = Field(default=1.0, ge=0.0, description="L2 regularization")
 
+    # Class imbalance handling
+    scale_pos_weight: float = Field(default=1.0, ge=0.0, description="Weight for positive class")
+    min_child_weight: float = Field(default=1.0, ge=0.0, description="Min sum of instance weight in child")
+
     # Additional parameters
     random_state: int = Field(default=42, description="Random seed for reproducibility")
     n_jobs: int = Field(default=-1, description="Number of parallel threads (-1 = all)")
@@ -246,6 +250,8 @@ class XGBoostModel:
                 "colsample_bytree": self.config.colsample_bytree,
                 "reg_alpha": self.config.reg_alpha,
                 "reg_lambda": self.config.reg_lambda,
+                "scale_pos_weight": self.config.scale_pos_weight,
+                "min_child_weight": self.config.min_child_weight,
                 "random_state": self.config.random_state,
                 "n_jobs": self.config.n_jobs,
                 "objective": "binary:logistic",

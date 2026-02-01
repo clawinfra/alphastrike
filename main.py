@@ -66,6 +66,16 @@ from src.risk.portfolio import PortfolioManager, Position
 from src.risk.risk_manager import RiskCheck, RiskManager
 from src.strategy.regime_detector import RegimeDetector, RegimeState
 
+# Adaptive trading system (optional, gracefully degrades if not available)
+try:
+    from src.adaptive import AdaptiveManager, AdaptiveState, OPTIMIZER_AVAILABLE
+    ADAPTIVE_AVAILABLE = True
+except ImportError:
+    ADAPTIVE_AVAILABLE = False
+    AdaptiveManager = None  # type: ignore
+    AdaptiveState = None  # type: ignore
+    OPTIMIZER_AVAILABLE = False
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -291,6 +301,7 @@ class TradingBot:
         self.order_manager: OrderManager | None = None
         self.position_sync: PositionSync | None = None
         self.ai_logger: AILogger | None = None
+        self.adaptive_manager: "AdaptiveManager | None" = None  # type: ignore
 
         # Candle buffers for feature calculation
         self._candle_buffers: dict[str, list[Candle]] = {}
@@ -380,6 +391,25 @@ class TradingBot:
             logs_dir=self.settings.logging.ai_logs_dir,
         )
         logger.info("AI logger initialized")
+
+        # 15. Adaptive trading manager (loads learned parameters per symbol)
+        if ADAPTIVE_AVAILABLE and AdaptiveManager is not None:
+            try:
+                self.adaptive_manager = AdaptiveManager(
+                    backtest_func=None,  # Live trading, no backtest
+                    auto_optimize=False,  # Don't auto-optimize in production
+                    auto_save=True,
+                )
+                self.adaptive_manager.initialize(self.settings.trading_pairs)
+                logger.info(
+                    f"Adaptive manager initialized for {len(self.settings.trading_pairs)} symbols"
+                )
+                logger.info(self.adaptive_manager.get_summary())
+            except Exception as e:
+                logger.warning(f"Adaptive manager initialization failed: {e}")
+                self.adaptive_manager = None
+        else:
+            logger.info("Adaptive trading system not available, using default parameters")
 
         # Initialize candle buffers for each trading pair
         for symbol in self.settings.trading_pairs:
@@ -577,6 +607,19 @@ class TradingBot:
             regime_state: RegimeState = self.regime_detector.detect_regime(features)
             regime = regime_state.regime.value
 
+            # 5b. Update adaptive manager with regime and get adjusted parameters
+            adaptive_params = None
+            if self.adaptive_manager:
+                try:
+                    self.adaptive_manager.update_regime(
+                        symbol=symbol,
+                        regime=regime_state.regime,
+                        confidence=regime_state.confidence,
+                    )
+                    adaptive_params = self.adaptive_manager.get_adjusted_params(symbol)
+                except Exception as e:
+                    logger.debug(f"Adaptive params lookup failed: {e}")
+
             # 6. Apply confidence filter
             if not self.confidence_filter:
                 return
@@ -623,6 +666,14 @@ class TradingBot:
                 logger.debug("Signal filtered to HOLD by signal processor")
                 return
 
+            # 7b. Check adaptive short blocking (learned from optimization)
+            if signal_result.signal == "SHORT" and adaptive_params:
+                if not adaptive_params.short_enabled:
+                    logger.info(
+                        f"SHORT signal blocked for {symbol}: adaptive system disabled shorts"
+                    )
+                    return
+
             # 8. Validate risk
             if not self.risk_manager or not self.portfolio:
                 return
@@ -638,8 +689,25 @@ class TradingBot:
             order_side = OrderSide.BUY if signal_result.signal == "LONG" else OrderSide.SELL
             position_side = PositionSide.LONG if signal_result.signal == "LONG" else PositionSide.SHORT
 
-            # Calculate position size
-            position_size = self.portfolio.balance * self.settings.position.per_trade_exposure * signal_result.position_scale
+            # Calculate position size with adaptive multiplier
+            adaptive_size_mult = 1.0
+            adaptive_stop_mult = 1.0
+            if adaptive_params:
+                adaptive_size_mult = adaptive_params.position_size_multiplier
+                adaptive_stop_mult = adaptive_params.stop_atr_multiplier
+                # Log adaptive adjustments for high-conviction trades
+                if signal_result.position_scale > 0.5:
+                    logger.info(
+                        f"Adaptive params for {symbol}: size={adaptive_size_mult:.2f}x, "
+                        f"stop={adaptive_stop_mult:.2f}x ATR, regime={regime}"
+                    )
+
+            position_size = (
+                self.portfolio.balance
+                * self.settings.position.per_trade_exposure
+                * signal_result.position_scale
+                * adaptive_size_mult
+            )
 
             # Create order request for risk check
             order_request = OrderRequest(

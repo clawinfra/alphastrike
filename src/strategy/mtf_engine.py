@@ -172,10 +172,14 @@ class MultiTimeframeEngine:
 
     def _has_sufficient_data(self) -> bool:
         """Check if we have enough data for analysis."""
+        # Adjusted thresholds for realistic data availability:
+        # - 1H: 50 candles (2 days)
+        # - 4H: 20 candles (3+ days)
+        # - Daily: 15 candles (2+ weeks)
         return (
             len(self._1h_candles) >= 50
-            and len(self._4h_candles) >= 50
-            and len(self._daily_candles) >= 50
+            and len(self._4h_candles) >= 20
+            and len(self._daily_candles) >= 15
         )
 
     def _create_insufficient_data_signal(self) -> MTFSignal:

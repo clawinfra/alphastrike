@@ -1,0 +1,15 @@
+{
+  "config": {
+    "conviction_threshold": 74.87566853061946,
+    "stop_atr_multiplier": 2.123422152178822,
+    "take_profit_atr_multiplier": 3.5602040635334324,
+    "position_size_multiplier": 0.9560523352119356,
+    "short_conviction_penalty": 2,
+    "short_enabled": true,
+    "require_daily_trend_for_short": true
+  },
+  "symbol": "BTCUSDT",
+  "optimized_at": "2026-02-01T12:20:04.630627+00:00",
+  "sharpe": 0.011567101413816299,
+  "oos_sharpe": 2.5980762113533156
+}

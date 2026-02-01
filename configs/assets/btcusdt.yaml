@@ -1,0 +1,26 @@
+symbol: BTCUSDT
+conviction_threshold: 74.87566853061946
+require_daily_trend_for_short: true
+short_conviction_penalty: 2
+position_size_multiplier: 0.9560523352119356
+max_position_pct: 0.02
+stop_atr_multiplier: 2.123422152178822
+take_profit_atr_multiplier: 3.5602040635334324
+trailing_stop_enabled: false
+trailing_stop_activation_atr: 1.5
+ensemble_weight_xgb: 0.4
+ensemble_weight_lgb: 0.4
+ensemble_weight_nn: 0.2
+short_enabled: true
+long_enabled: true
+max_trades_per_day: 5
+min_time_between_trades_minutes: 60
+min_trades_for_tuning: 20
+min_data_quality_score: 0.8
+win_rate_threshold: 0.5
+max_drawdown_threshold: 0.05
+rolling_window_days: 30
+last_tuned: '2026-02-01T12:20:04.627904+00:00'
+tune_count: 1
+created_at: '2026-02-01T12:14:39.236204+00:00'
+notes: 'Auto-tuned: manual_optimization (Sharpe=0.01)'

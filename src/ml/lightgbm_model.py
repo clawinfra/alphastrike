@@ -30,6 +30,9 @@ class LightGBMConfig:
     feature_fraction: float = 0.8
     bagging_fraction: float = 0.8
     bagging_freq: int = 5
+    reg_alpha: float = 0.0  # L1 regularization
+    reg_lambda: float = 0.0  # L2 regularization
+    is_unbalance: bool = False  # Handle class imbalance
     verbose: int = -1  # Suppress LightGBM output
     random_state: int = 42
     objective: str = "binary"
@@ -365,6 +368,9 @@ class LightGBMModel:
             "feature_fraction": self.config.feature_fraction,
             "bagging_fraction": self.config.bagging_fraction,
             "bagging_freq": self.config.bagging_freq,
+            "lambda_l1": self.config.reg_alpha,
+            "lambda_l2": self.config.reg_lambda,
+            "is_unbalance": self.config.is_unbalance,
             "verbose": self.config.verbose,
             "seed": self.config.random_state,
         }

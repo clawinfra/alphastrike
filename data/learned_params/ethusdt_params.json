@@ -1,0 +1,15 @@
+{
+  "config": {
+    "conviction_threshold": 76.24217733388136,
+    "stop_atr_multiplier": 1.541168988591605,
+    "take_profit_atr_multiplier": 4.909729556485983,
+    "position_size_multiplier": 1.298931168960506,
+    "short_conviction_penalty": 3,
+    "short_enabled": false,
+    "require_daily_trend_for_short": false
+  },
+  "symbol": "ETHUSDT",
+  "optimized_at": "2026-02-01T12:25:33.926854+00:00",
+  "sharpe": -0.12640579451319192,
+  "oos_sharpe": 3.6698325165764016
+}

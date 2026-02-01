@@ -1,0 +1,26 @@
+symbol: ETHUSDT
+conviction_threshold: 76.24217733388136
+require_daily_trend_for_short: false
+short_conviction_penalty: 3
+position_size_multiplier: 1.298931168960506
+max_position_pct: 0.02
+stop_atr_multiplier: 1.541168988591605
+take_profit_atr_multiplier: 4.909729556485983
+trailing_stop_enabled: false
+trailing_stop_activation_atr: 1.5
+ensemble_weight_xgb: 0.4
+ensemble_weight_lgb: 0.4
+ensemble_weight_nn: 0.2
+short_enabled: false
+long_enabled: true
+max_trades_per_day: 5
+min_time_between_trades_minutes: 60
+min_trades_for_tuning: 20
+min_data_quality_score: 0.8
+win_rate_threshold: 0.5
+max_drawdown_threshold: 0.05
+rolling_window_days: 30
+last_tuned: '2026-02-01T12:25:33.923791+00:00'
+tune_count: 1
+created_at: '2026-02-01T12:20:04.631961+00:00'
+notes: 'Auto-tuned: manual_optimization (Sharpe=-0.13)'

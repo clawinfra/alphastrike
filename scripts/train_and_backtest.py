@@ -201,48 +201,101 @@ async def train_models(symbol: str, interval: str = "1h", min_samples: int = 500
     validation_accuracy = {}
     model_paths = {}
 
-    # Calculate class distribution
+    # Calculate class distribution and weights
     pos_count = float(np.sum(y_train))
     neg_count = float(len(y_train) - pos_count)
-    logger.info(f"Class balance: pos={pos_count:.0f}, neg={neg_count:.0f}")
+    scale_pos_weight = neg_count / max(pos_count, 1)  # For XGBoost
+    logger.info(f"Class balance: pos={pos_count:.0f}, neg={neg_count:.0f}, scale_pos_weight={scale_pos_weight:.2f}")
 
-    # Train XGBoost with stronger regularization to prevent overfitting
+    def is_degenerate(preds: np.ndarray, threshold: float = 0.01) -> bool:
+        """Check if predictions are degenerate (all same class or near-zero variance)."""
+        pred_variance = float(np.var(preds))
+        unique_preds = len(np.unique(np.round(preds, 2)))
+        return bool(pred_variance < threshold or unique_preds < 3)
+
+    # Train XGBoost with class weights and stronger regularization
     try:
         logger.info("Training XGBoost...")
         xgb = XGBoostModel(XGBoostConfig(
-            n_estimators=100,
-            max_depth=4,  # Reduced to prevent overfitting
-            learning_rate=0.05,  # Lower learning rate
-            subsample=0.7,  # Row subsampling
-            colsample_bytree=0.7,  # Column subsampling
-            reg_alpha=0.5,  # Stronger L1 regularization
-            reg_lambda=2.0,  # Stronger L2 regularization
+            n_estimators=150,
+            max_depth=3,  # Even shallower to prevent overfitting
+            learning_rate=0.03,  # Lower learning rate
+            subsample=0.6,  # More aggressive row subsampling
+            colsample_bytree=0.6,  # More aggressive column subsampling
+            reg_alpha=1.0,  # Stronger L1 regularization
+            reg_lambda=3.0,  # Stronger L2 regularization
+            scale_pos_weight=scale_pos_weight,  # Handle class imbalance
+            min_child_weight=5,  # Require more samples per leaf
         ))
         xgb.train(X_train, y_train, feature_names=feature_names, X_val=X_val, y_val=y_val)
         preds = xgb.predict(X_val)
+
+        # Check for degenerate model
+        if is_degenerate(preds):
+            logger.warning(f"XGBoost produced degenerate predictions (var={np.var(preds):.4f})")
+            logger.warning("Retraining with different parameters...")
+            # Try with even more regularization
+            xgb = XGBoostModel(XGBoostConfig(
+                n_estimators=50,
+                max_depth=2,
+                learning_rate=0.1,
+                subsample=0.5,
+                colsample_bytree=0.5,
+                reg_alpha=2.0,
+                reg_lambda=5.0,
+                scale_pos_weight=1.0,  # Try balanced
+                min_child_weight=10,
+            ))
+            xgb.train(X_train, y_train, feature_names=feature_names, X_val=X_val, y_val=y_val)
+            preds = xgb.predict(X_val)
+
         acc = float(np.mean((preds > 0.5) == y_val))
+        pred_var = np.var(preds)
         path = models_dir / "xgboost.joblib"
         xgb.save(path)
         models_trained.append("xgboost")
         validation_accuracy["xgboost"] = acc
         model_paths["xgboost"] = str(path)
-        logger.info(f"XGBoost: {acc:.2%} accuracy")
+        logger.info(f"XGBoost: {acc:.2%} accuracy, pred_variance={pred_var:.4f}")
     except Exception as e:
         logger.error(f"XGBoost training failed: {e}")
 
-    # Train LightGBM
+    # Train LightGBM with class weights
     try:
         logger.info("Training LightGBM...")
-        lgb = LightGBMModel(LightGBMConfig(n_estimators=100, num_leaves=31, learning_rate=0.1))
+        lgb = LightGBMModel(LightGBMConfig(
+            n_estimators=150,
+            num_leaves=15,  # Reduced for regularization
+            learning_rate=0.05,
+            max_depth=4,
+            reg_alpha=0.5,
+            reg_lambda=1.0,
+            is_unbalance=True,  # Handle class imbalance
+        ))
         lgb.train(X_train, y_train)
         preds = lgb.predict(X_val)
+
+        if is_degenerate(preds):
+            logger.warning(f"LightGBM produced degenerate predictions, retraining...")
+            lgb = LightGBMModel(LightGBMConfig(
+                n_estimators=50,
+                num_leaves=8,
+                learning_rate=0.1,
+                max_depth=3,
+                reg_alpha=1.0,
+                reg_lambda=2.0,
+            ))
+            lgb.train(X_train, y_train)
+            preds = lgb.predict(X_val)
+
         acc = float(np.mean((preds > 0.5) == y_val))
+        pred_var = np.var(preds)
         path = models_dir / "lightgbm.txt"
         lgb.save(path)
         models_trained.append("lightgbm")
         validation_accuracy["lightgbm"] = acc
         model_paths["lightgbm"] = str(path)
-        logger.info(f"LightGBM: {acc:.2%} accuracy")
+        logger.info(f"LightGBM: {acc:.2%} accuracy, pred_variance={pred_var:.4f}")
     except Exception as e:
         logger.error(f"LightGBM training failed: {e}")
 

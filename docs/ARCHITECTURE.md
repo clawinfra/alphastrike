@@ -1,7 +1,7 @@
 # AlphaStrike Trading Bot - Architecture Document
 
-**Version:** 2.4
-**Last Updated:** January 2026
+**Version:** 2.5
+**Last Updated:** February 2026
 **Status:** Production
 
 ---
@@ -18,6 +18,7 @@
 8. [Configuration](#8-configuration)
 9. [Deployment](#9-deployment)
 10. [Monitoring](#10-monitoring)
+11. [Adaptive Optimization System](#11-adaptive-optimization-system)
 
 ---
 
@@ -2266,6 +2267,91 @@ alphastrike/
 
 ---
 
+## 11. Adaptive Optimization System
+
+### 11.1 Overview
+
+The Adaptive Optimization System provides self-tuning, per-symbol parameter optimization with regime-aware real-time adjustment. It ensures the trading system automatically adapts to changing market conditions while preventing overfitting.
+
+**Full Design Document:** [docs/plans/2026-02-01-adaptive-optimization-architecture.md](plans/2026-02-01-adaptive-optimization-architecture.md)
+
+### 11.2 Core Components
+
+| Component | Purpose | Location |
+|-----------|---------|----------|
+| **ParameterOptimizer** | Bayesian optimization (Optuna TPE) | `src/adaptive/parameter_optimizer.py` |
+| **WalkForwardValidator** | Overfitting prevention via rolling IS/OOS | `src/adaptive/walk_forward.py` |
+| **RegimeAwareParams** | Real-time regime-based adjustment | `src/adaptive/regime_params.py` |
+| **AdaptiveManager** | Central orchestrator | `src/adaptive/adaptive_manager.py` |
+| **PerformanceTracker** | Trigger detection (win rate, DD, losses) | `src/adaptive/performance_tracker.py` |
+
+### 11.3 Key Design Decisions
+
+1. **Bayesian Optimization (Not Grid Search)** - 30-50 trials finds near-optimal vs 1000+ for grid search
+2. **Trigger-Based Optimization** - Runs when performance degrades, not on schedule
+3. **Walk-Forward Validation** - OOS Sharpe must be ≥50% of IS Sharpe
+4. **Regime-Aware Adjustment** - Separate from optimization; applies multipliers in real-time
+5. **Symbol-Specific Parameters** - Each asset has unique characteristics
+
+### 11.4 Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                  ADAPTIVE OPTIMIZATION FLOW                      │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│   Trade Completed                                                │
+│        │                                                         │
+│        ▼                                                         │
+│   PerformanceTracker.record_trade()                             │
+│        │                                                         │
+│        ├──► Check: win rate < 40%?                              │
+│        ├──► Check: drawdown > 10%?                              │
+│        ├──► Check: 3+ consecutive losses?                       │
+│        │                                                         │
+│        ▼ (if trigger fired)                                     │
+│   ParameterOptimizer.optimize()                                 │
+│        │                                                         │
+│        ├──► Run 40-50 Bayesian trials                           │
+│        │                                                         │
+│        ▼                                                         │
+│   WalkForwardValidator.validate()                               │
+│        │                                                         │
+│        ├──► Check: OOS Sharpe ≥ 50% of IS?                      │
+│        │                                                         │
+│        ▼ (if validated)                                         │
+│   Apply to config + Save to disk                                │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 11.5 Regime Adjustments
+
+| Regime | Conviction | Stop | Size | Direction |
+|--------|------------|------|------|-----------|
+| TRENDING_UP | -5 | 1.2x | 1.1x | +0.3 (longs) |
+| TRENDING_DOWN | -5 | 1.1x | 1.0x | -0.3 (shorts) |
+| RANGING | +10 | 0.8x | 0.7x | 0 |
+| HIGH_VOLATILITY | +15 | 1.5x | 0.5x | 0 |
+| EXTREME_VOLATILITY | +25 | 2.0x | 0.25x | 0 |
+
+### 11.6 File Locations
+
+```
+src/adaptive/
+├── parameter_optimizer.py   # Bayesian optimization
+├── walk_forward.py          # Walk-forward validation
+├── regime_params.py         # Regime adjustments
+├── adaptive_manager.py      # Orchestrator
+├── performance_tracker.py   # Trigger detection
+└── hot_reload.py            # Zero-downtime updates
+
+configs/assets/              # Per-symbol YAML configs
+data/learned_params/         # Learned parameters (JSON)
+```
+
+---
+
 *Document History:*
 - v1.0 (December 2025): Initial architecture
 - v2.0 (January 2026): Updated based on production learnings
@@ -2290,3 +2376,10 @@ alphastrike/
   - OpenAPI integration for automatic adapter generation
   - WEEX adapter refactored from src/data/ clients
   - Deprecated src/data/rest_client.py and websocket_client.py
+- v2.5 (February 2026): Added Adaptive Optimization System (Section 11)
+  - Bayesian optimization for symbol-specific parameter tuning
+  - Walk-forward validation to prevent overfitting
+  - Regime-aware real-time parameter adjustment
+  - Trigger-based optimization (win rate, drawdown, consecutive losses)
+  - AdaptiveManager central orchestrator
+  - See docs/plans/2026-02-01-adaptive-optimization-architecture.md for full details

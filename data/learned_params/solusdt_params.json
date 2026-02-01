@@ -1,0 +1,15 @@
+{
+  "config": {
+    "conviction_threshold": 72.93699936433255,
+    "stop_atr_multiplier": 3.3437484700462337,
+    "take_profit_atr_multiplier": 2.2654775061557584,
+    "position_size_multiplier": 0.5351794349029743,
+    "short_conviction_penalty": 0,
+    "short_enabled": false,
+    "require_daily_trend_for_short": false
+  },
+  "symbol": "SOLUSDT",
+  "optimized_at": "2026-02-01T12:30:53.140345+00:00",
+  "sharpe": -0.3428889406010271,
+  "oos_sharpe": 3.619878089751905
+}

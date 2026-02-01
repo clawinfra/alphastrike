@@ -82,6 +82,7 @@ class TimeframeSignals:
     four_hour_signal: Literal["LONG", "SHORT", "HOLD"]
     four_hour_confidence: float
     one_hour_momentum: Literal["BULLISH", "BEARISH", "NEUTRAL"]
+    mtf_aligned: bool = False  # Whether MTF engine considers timeframes aligned
 
 
 @dataclass
@@ -105,24 +106,81 @@ class ConvictionScorer:
 
     The conviction score determines whether to trade and at what size.
     It synthesizes multiple factors into a single 0-100 score.
+
+    Supports dynamic thresholds from the adaptive optimization system.
     """
 
-    # Score thresholds
-    MIN_TRADE_SCORE = 70
-    SMALL_TIER_MAX = 84
-    MEDIUM_TIER_MAX = 94
+    # Default score thresholds (can be overridden per-symbol)
+    DEFAULT_MIN_TRADE_SCORE = 70
+    DEFAULT_SMALL_TIER_MAX = 84
+    DEFAULT_MEDIUM_TIER_MAX = 94
 
-    # Position sizing by tier
-    TIER_SIZING = {
+    # Default position sizing by tier
+    DEFAULT_TIER_SIZING = {
         PositionTier.NO_TRADE: {"position_pct": 0.0, "risk_pct": 0.0, "stop_atr": 0.0},
         PositionTier.SMALL: {"position_pct": 0.15, "risk_pct": 0.0025, "stop_atr": 1.2},
         PositionTier.MEDIUM: {"position_pct": 0.30, "risk_pct": 0.004, "stop_atr": 1.0},
         PositionTier.LARGE: {"position_pct": 0.50, "risk_pct": 0.005, "stop_atr": 0.8},
     }
 
-    def __init__(self) -> None:
-        """Initialize the conviction scorer."""
-        logger.info("ConvictionScorer initialized")
+    def __init__(
+        self,
+        min_trade_score: float | None = None,
+        stop_atr_multiplier: float | None = None,
+        position_size_multiplier: float | None = None,
+    ) -> None:
+        """
+        Initialize the conviction scorer.
+
+        Args:
+            min_trade_score: Minimum conviction score for trading (default: 70)
+            stop_atr_multiplier: ATR multiplier for stop loss (applied to tier sizing)
+            position_size_multiplier: Position size multiplier (applied to tier sizing)
+        """
+        # Dynamic thresholds from adaptive system
+        self.MIN_TRADE_SCORE = min_trade_score or self.DEFAULT_MIN_TRADE_SCORE
+        self.SMALL_TIER_MAX = self.DEFAULT_SMALL_TIER_MAX
+        self.MEDIUM_TIER_MAX = self.DEFAULT_MEDIUM_TIER_MAX
+
+        # Build tier sizing with optional multipliers
+        self.TIER_SIZING = {}
+        for tier, sizing in self.DEFAULT_TIER_SIZING.items():
+            self.TIER_SIZING[tier] = {
+                "position_pct": sizing["position_pct"] * (position_size_multiplier or 1.0),
+                "risk_pct": sizing["risk_pct"],
+                "stop_atr": sizing["stop_atr"] * (stop_atr_multiplier or 1.0) if sizing["stop_atr"] > 0 else 0.0,
+            }
+
+        logger.info(
+            f"ConvictionScorer initialized: min_score={self.MIN_TRADE_SCORE:.0f}, "
+            f"stop_mult={stop_atr_multiplier or 1.0:.2f}, size_mult={position_size_multiplier or 1.0:.2f}"
+        )
+
+    def update_thresholds(
+        self,
+        min_trade_score: float | None = None,
+        stop_atr_multiplier: float | None = None,
+        position_size_multiplier: float | None = None,
+    ) -> None:
+        """
+        Update thresholds dynamically (for hot-reload from adaptive system).
+
+        Args:
+            min_trade_score: New minimum conviction score
+            stop_atr_multiplier: New ATR multiplier for stops
+            position_size_multiplier: New position size multiplier
+        """
+        if min_trade_score is not None:
+            self.MIN_TRADE_SCORE = min_trade_score
+
+        if stop_atr_multiplier is not None or position_size_multiplier is not None:
+            for tier, sizing in self.DEFAULT_TIER_SIZING.items():
+                if stop_atr_multiplier is not None and sizing["stop_atr"] > 0:
+                    self.TIER_SIZING[tier]["stop_atr"] = sizing["stop_atr"] * stop_atr_multiplier
+                if position_size_multiplier is not None:
+                    self.TIER_SIZING[tier]["position_pct"] = sizing["position_pct"] * position_size_multiplier
+
+        logger.info(f"ConvictionScorer thresholds updated: min_score={self.MIN_TRADE_SCORE:.0f}")
 
     def calculate(
         self,
@@ -190,37 +248,48 @@ class ConvictionScorer:
         """
         Score timeframe alignment (0-30 points).
 
-        Full points when all three timeframes agree on direction.
+        Full points when MTF engine confirms alignment, or when all three
+        timeframes agree on direction.
         """
         score = 0.0
 
-        # Determine if 4H signal aligns with Daily trend
-        four_hour_bullish = signals.four_hour_signal == "LONG"
-        four_hour_bearish = signals.four_hour_signal == "SHORT"
-
-        daily_bullish = signals.daily_trend == "BULL"
-        daily_bearish = signals.daily_trend == "BEAR"
-
-        one_hour_bullish = signals.one_hour_momentum == "BULLISH"
-        one_hour_bearish = signals.one_hour_momentum == "BEARISH"
-
-        # All three align bullish
-        if four_hour_bullish and daily_bullish and one_hour_bullish:
-            score = 30.0
-        # All three align bearish
-        elif four_hour_bearish and daily_bearish and one_hour_bearish:
-            score = 30.0
-        # Daily + 4H align, 1H neutral or slightly misaligned
-        elif (four_hour_bullish and daily_bullish) or (four_hour_bearish and daily_bearish):
+        # If MTF engine says aligned, give strong base score
+        # This handles cases where Daily is NEUTRAL but 4H+1H agree strongly
+        if signals.mtf_aligned:
+            # MTF aligned means tradeable setup - start with 22 points
             score = 22.0
-        # Only 4H + 1H align (counter-trend to daily)
-        elif (four_hour_bullish and one_hour_bullish) or (four_hour_bearish and one_hour_bearish):
-            score = 10.0
-        # No alignment
         else:
-            score = 0.0
+            # Fallback to traditional analysis
+            four_hour_bullish = signals.four_hour_signal == "LONG"
+            four_hour_bearish = signals.four_hour_signal == "SHORT"
 
-        # Bonus for strong daily ADX
+            daily_bullish = signals.daily_trend == "BULL"
+            daily_bearish = signals.daily_trend == "BEAR"
+
+            one_hour_bullish = signals.one_hour_momentum == "BULLISH"
+            one_hour_bearish = signals.one_hour_momentum == "BEARISH"
+
+            # All three align bullish
+            if four_hour_bullish and daily_bullish and one_hour_bullish:
+                score = 30.0
+            # All three align bearish
+            elif four_hour_bearish and daily_bearish and one_hour_bearish:
+                score = 30.0
+            # Daily + 4H align, 1H neutral or slightly misaligned
+            elif (four_hour_bullish and daily_bullish) or (four_hour_bearish and daily_bearish):
+                score = 22.0
+            # Only 4H + 1H align (counter-trend to daily)
+            elif (four_hour_bullish and one_hour_bullish) or (four_hour_bearish and one_hour_bearish):
+                score = 10.0
+            # No alignment
+            else:
+                score = 0.0
+
+        # Bonus for clear Daily direction (not NEUTRAL)
+        if signals.daily_trend in ("BULL", "BEAR"):
+            score = min(30.0, score + 5.0)
+
+        # Bonus for strong daily ADX (trending strength)
         if signals.daily_adx > 30:
             score = min(30.0, score + 3.0)
 

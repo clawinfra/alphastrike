@@ -59,8 +59,12 @@ DEFAULT_WEIGHTS: dict[str, float] = {
 }
 
 # Signal thresholds
-LONG_THRESHOLD = 0.75
-SHORT_THRESHOLD = 0.25
+# Adjusted for momentum-based models that output predictions ~0.6-0.8
+# Models predict probability of price > EMA (bullish momentum)
+# > 0.70 = strong bullish signal (above model's neutral)
+# < 0.55 = bearish signal (below model's neutral, rare but meaningful)
+LONG_THRESHOLD = 0.70
+SHORT_THRESHOLD = 0.55
 
 # Minimum healthy models required
 MIN_HEALTHY_MODELS = 2
