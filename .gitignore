@@ -42,6 +42,9 @@ logs/
 # Data
 data/*.db
 data/*.sqlite
+data/candle_cache/
+data/demo_state/
+data/optimization_results/
 
 # Models (large files)
 models/*.pkl
