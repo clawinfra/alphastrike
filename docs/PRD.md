@@ -1,6 +1,6 @@
 # AlphaStrike Trading Bot - Product Requirements Document (PRD)
 
-**Version:** 2.0
+**Version:** 2.1
 **Last Updated:** January 2026
 **Status:** Production
 **Owner:** Bowen Li
@@ -26,7 +26,7 @@
 
 ### 1.1 Product Vision
 
-AlphaStrike is an autonomous algorithmic trading bot designed for cryptocurrency perpetual futures trading on the WEEX exchange. The system combines machine learning ensemble predictions with adaptive risk management to generate profitable trading signals while maintaining strict risk controls.
+AlphaStrike is an autonomous algorithmic trading bot designed for cryptocurrency perpetual futures trading. The system features a multi-exchange abstraction layer supporting any CEX or DEX via adapter pattern, combined with machine learning ensemble predictions and adaptive risk management to generate profitable trading signals while maintaining strict risk controls.
 
 ### 1.2 Core Philosophy
 
@@ -43,6 +43,7 @@ The system prioritizes high-quality, high-conviction trades over frequent low-co
 | **Adaptive Risk** | Multi-layer risk management with position scaling |
 | **Self-Healing** | Automatic model health detection and retraining |
 | **Competition Compliance** | Full WEEX competition rule compliance |
+| **Exchange Agnostic** | Adapter pattern supports any CEX/DEX via OpenAPI specs |
 
 ---
 
@@ -105,7 +106,6 @@ From production deployment, key issues were identified and addressed:
 - High-frequency trading (HFT) strategies
 - Arbitrage between exchanges
 - Manual intervention in trading decisions
-- Support for exchanges other than WEEX
 - Social/copy trading features
 
 ---
@@ -166,6 +166,16 @@ From production deployment, key issues were identified and addressed:
 - AI log submitted for every trade
 - Maximum 20x leverage enforced
 - No wash trading detected
+
+#### US-006: Multi-Exchange Support
+> As a trading operator, I want to deploy the bot on different exchanges (CEX or DEX) without modifying core trading logic.
+
+**Acceptance Criteria:**
+- Exchange selection via configuration (environment variable)
+- Unified data models work across all exchanges
+- Exchange-specific details encapsulated in adapters
+- New exchanges added by providing OpenAPI specification
+- Symbol normalization automatic (e.g., cmt_btcusdt ↔ BTCUSDT)
 
 ---
 
@@ -347,9 +357,53 @@ The system SHALL place exchange-side protective orders:
 - FR-015.2: Exchange-side TP orders (profit_plan)
 - FR-015.3: Order update rate limiting (30-120 seconds)
 
-### 5.6 Market Regime Detection
+### 5.6 Exchange Abstraction Layer
 
-#### FR-016: Regime Classification
+#### FR-016: Exchange Adapter Pattern
+**Priority:** P0 (Critical)
+
+The system SHALL provide a unified exchange interface via adapter pattern:
+
+| Component | Purpose |
+|-----------|---------|
+| `ExchangeRESTProtocol` | Abstract interface for REST operations |
+| `ExchangeWebSocketProtocol` | Abstract interface for real-time data |
+| `ExchangeAdapter` | Combines REST and WebSocket with symbol normalization |
+| `ExchangeFactory` | Runtime adapter creation from configuration |
+
+**Requirements:**
+- FR-016.1: All trading logic uses unified data models (UnifiedOrder, UnifiedPosition, etc.)
+- FR-016.2: Symbol format normalized to `BTCUSDT` across all exchanges
+- FR-016.3: Exchange selection via `EXCHANGE_NAME` environment variable
+- FR-016.4: Adapter registration allows adding new exchanges without core changes
+
+#### FR-017: Unified Data Models
+**Priority:** P0 (Critical)
+
+The system SHALL use exchange-agnostic data models:
+
+| Model | Purpose |
+|-------|---------|
+| `UnifiedOrder` | Order request with standardized fields |
+| `UnifiedOrderResult` | Order response/fill information |
+| `UnifiedPosition` | Position state across exchanges |
+| `UnifiedAccountBalance` | Account balance with margin info |
+| `UnifiedTicker` | Real-time price data |
+| `UnifiedOrderbook` | Bid/ask depth |
+| `UnifiedCandle` | OHLCV data |
+
+#### FR-018: OpenAPI Integration
+**Priority:** P1 (High)
+
+The system SHALL support OpenAPI-driven adapter generation:
+- FR-018.1: Parse OpenAPI 3.x specifications
+- FR-018.2: Auto-map endpoints to protocol methods
+- FR-018.3: Generate adapter skeleton code
+- FR-018.4: Confidence scoring for endpoint mappings
+
+### 5.7 Market Regime Detection
+
+#### FR-019: Regime Classification
 **Priority:** P0 (Critical)
 
 The system SHALL classify market regimes:
@@ -363,9 +417,9 @@ The system SHALL classify market regimes:
 | Extreme Volatility | ATR Ratio > 2.0 | 0.3x position, minimal trading |
 | Trend Exhaustion | ADX > 60 + ROC < -2 | Block new entries |
 
-### 5.7 Model Management
+### 5.8 Model Management
 
-#### FR-017: Self-Healing Models
+#### FR-020: Self-Healing Models
 **Priority:** P1 (High)
 
 The system SHALL implement self-healing model management:
@@ -374,7 +428,7 @@ The system SHALL implement self-healing model management:
 - FR-017.3: Automatic corrupted model deletion
 - FR-017.4: Force retrain signal for trainer subprocess
 
-#### FR-018: Model Retraining
+#### FR-021: Model Retraining
 **Priority:** P1 (High)
 
 The system SHALL implement automatic retraining:
@@ -383,9 +437,9 @@ The system SHALL implement automatic retraining:
 - FR-018.3: Automatic rollback if new model underperforms
 - FR-018.4: Balanced training data (equal LONG/SHORT labels)
 
-### 5.8 Competition Compliance
+### 5.9 Competition Compliance
 
-#### FR-019: WEEX Competition Rules
+#### FR-022: WEEX Competition Rules
 **Priority:** P0 (Critical)
 
 The system SHALL comply with WEEX competition rules:
@@ -490,11 +544,11 @@ The system SHALL comply with WEEX competition rules:
 
 | Constraint | Description |
 |------------|-------------|
-| Exchange | WEEX only (competition requirement) |
-| Leverage | Maximum 20x (competition limit) |
-| Pairs | 8 approved pairs only |
+| Exchange | Configurable via adapter pattern (WEEX, Hyperliquid, Binance, etc.) |
+| Leverage | Maximum 20x (competition limit, configurable per exchange) |
+| Pairs | 8 approved pairs for WEEX competition |
 | Order limit | 200 active orders on exchange |
-| API rate | Subject to WEEX rate limits |
+| API rate | Subject to exchange-specific rate limits |
 
 ### 8.2 Business Constraints
 
@@ -589,3 +643,8 @@ See `docs/ARCHITECTURE.md` for detailed configuration reference.
 *Document History:*
 - v1.0 (December 2025): Initial release
 - v2.0 (January 2026): Updated based on production learnings
+- v2.1 (January 2026): Added multi-exchange abstraction layer (FR-016 through FR-018)
+  - Exchange adapter pattern with unified protocols
+  - Unified data models for exchange-agnostic trading
+  - OpenAPI integration for automatic adapter generation
+  - Removed "WEEX only" constraint - now supports any CEX/DEX

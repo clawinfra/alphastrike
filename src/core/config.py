@@ -275,17 +275,45 @@ class DataGatewayConfig(BaseSettings):
     circuit_breaker_reset_seconds: float = Field(default=60.0, gt=0)
 
 
+class ExchangeType(str, Enum):
+    """Supported exchange types for the trading bot."""
+
+    WEEX = "weex"
+    HYPERLIQUID = "hyperliquid"
+    BINANCE = "binance"
+
+
 class ExchangeConfig(BaseSettings):
-    """WEEX exchange configuration."""
+    """
+    Exchange configuration supporting multiple CEX/DEX.
 
-    model_config = SettingsConfigDict(env_prefix="WEEX_")
+    The exchange abstraction layer allows the bot to work with any exchange
+    by implementing the appropriate adapter. Configure which exchange to use
+    via the EXCHANGE_NAME environment variable.
+    """
 
-    api_key: str = Field(default="", description="WEEX API key")
-    api_secret: str = Field(default="", description="WEEX API secret")
-    api_passphrase: str = Field(default="", description="WEEX API passphrase")
+    model_config = SettingsConfigDict(env_prefix="EXCHANGE_")
 
+    # Exchange selection
+    name: ExchangeType = Field(
+        default=ExchangeType.WEEX,
+        description="Exchange to use (weex, hyperliquid, binance)"
+    )
+
+    # API credentials (used by all exchanges)
+    api_key: str = Field(default="", description="Exchange API key")
+    api_secret: str = Field(default="", description="Exchange API secret")
+    api_passphrase: str = Field(default="", description="API passphrase (WEEX, some CEXs)")
+
+    # DEX-specific credentials
+    wallet_private_key: str = Field(default="", description="Wallet private key (for DEX)")
+
+    # URLs (override defaults if needed)
     rest_url: str = Field(default="https://api.weex.com", description="REST API base URL")
     ws_url: str = Field(default="wss://ws.weex.com", description="WebSocket URL")
+
+    # OpenAPI spec path for generic adapters
+    openapi_spec_path: str = Field(default="", description="Path to OpenAPI spec file")
 
     # Rate limiting
     rate_limit_requests: int = Field(default=100, description="Max requests per minute")

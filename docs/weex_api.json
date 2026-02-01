@@ -1,0 +1,3640 @@
+{
+    "openapi": "3.1.0",
+    "info": {
+      "title": "WEEX Futures Trading API",
+      "description": "WEEX Futures Trading API provides comprehensive endpoints for cryptocurrency derivatives trading including market data, account management, and order operations.\n\n---\n\n# 🚀 Getting Started\n\n## Quick Start Guide\n\n### Step 1: Create API Keys\n1. Log in to your WEEX account at [weex.com](https://www.weex.com)\n2. Navigate to **API Management** in your account settings\n3. Create a new API key with the permissions you need:\n   - **Read**: View account info, positions, order history\n   - **Trade**: Place and cancel orders\n   - **Transfer**: Withdraw funds (optional)\n4. Save your **API Key**, **API Secret**, and **Passphrase** securely\n\n### Step 2: Test Connectivity\nMake your first API call (no authentication required):\n```bash\ncurl \"https://api-contract.weex.com/capi/v2/market/time\"\n```\n\n### Step 3: Make Authenticated Requests\nFor protected endpoints, you need to include authentication headers.\nSee the **Authentication** section below.\n\n---\n\n# 🔐 Authentication\n\n## Required Headers\n\n| Header | Description | Source |\n|--------|-------------|--------|\n| `ACCESS-KEY` | Your API Key | You provide |\n| `ACCESS-SIGN` | HMAC-SHA256 signature | Calculated |\n| `ACCESS-PASSPHRASE` | Your API passphrase | You provide |\n| `ACCESS-TIMESTAMP` | Current Unix millisecond timestamp | Auto-generated |\n| `Content-Type` | Always `application/json` | Auto-added |\n| `locale` | Language setting | Default: `en-US` |\n\n## Signature Generation\n\nThe signature is created using HMAC-SHA256:\n\n```\nsignature = Base64(HMAC-SHA256(secret, timestamp + method + path + body))\n```\n\nWhere:\n- `timestamp`: Unix millisecond timestamp\n- `method`: HTTP method in uppercase (GET, POST, etc.)\n- `path`: Request path (e.g., `/capi/v2/order/placeOrder`)\n- `body`: Request body for POST requests (empty string for GET)\n\n### Python Example\n```python\nimport hmac\nimport hashlib\nimport base64\nimport time\nimport requests\n\napi_key = \"your_api_key\"\napi_secret = \"your_api_secret\"\npassphrase = \"your_passphrase\"\n\ntimestamp = str(int(time.time() * 1000))\nmethod = \"GET\"\npath = \"/capi/v2/account/assets\"\nbody = \"\"\n\nmessage = timestamp + method + path + body\nsignature = base64.b64encode(\n    hmac.new(api_secret.encode(), message.encode(), hashlib.sha256).digest()\n).decode()\n\nheaders = {\n    \"ACCESS-KEY\": api_key,\n    \"ACCESS-SIGN\": signature,\n    \"ACCESS-PASSPHRASE\": passphrase,\n    \"ACCESS-TIMESTAMP\": timestamp,\n    \"Content-Type\": \"application/json\"\n}\n\nresponse = requests.get(f\"https://api-contract.weex.com{path}\", headers=headers)\nprint(response.json())\n```\n\n### JavaScript (Node.js) Example\n```javascript\nconst crypto = require('crypto');\nconst axios = require('axios');\n\nconst apiKey = 'your_api_key';\nconst apiSecret = 'your_api_secret';\nconst passphrase = 'your_passphrase';\n\nconst timestamp = Date.now().toString();\nconst method = 'GET';\nconst path = '/capi/v2/account/assets';\nconst body = '';\n\nconst message = timestamp + method + path + body;\nconst signature = crypto\n  .createHmac('sha256', apiSecret)\n  .update(message)\n  .digest('base64');\n\naxios.get(`https://api-contract.weex.com${path}`, {\n  headers: {\n    'ACCESS-KEY': apiKey,\n    'ACCESS-SIGN': signature,\n    'ACCESS-PASSPHRASE': passphrase,\n    'ACCESS-TIMESTAMP': timestamp,\n    'Content-Type': 'application/json'\n  }\n}).then(response => console.log(response.data));\n```\n\n## Interactive Documentation\nWhen using this documentation page, enter your API Secret in the ACCESS-SIGN field.\nThe system automatically generates timestamps and signatures for you.\n\n---\n\n# 📊 Rate Limiting\n\n## Overview\nRate limits are enforced per endpoint based on IP address and User ID (UID).\n\n| Category | IP Limit | UID Limit | Window |\n|----------|----------|-----------|--------|\n| Market Data | 20 req/sec | N/A | 1 second |\n| Account Info | 10 req/sec | 10 req/sec | 1 second |\n| Order Placement | 10 req/sec | 10 req/sec | 1 second |\n| Order Cancellation | 10 req/sec | 10 req/sec | 1 second |\n\n## Rate Limit Headers\n```\nX-RateLimit-Limit: 10\nX-RateLimit-Remaining: 9\nX-RateLimit-Reset: 1716710918113\n```\n\n## Handling Rate Limits\n- Implement exponential backoff when receiving 429 errors\n- Cache market data to reduce unnecessary requests\n- Use WebSocket for real-time data instead of polling\n\n---\n\n# 📖 Glossary\n\n| Term | Definition |\n|------|------------|\n| **Leverage** | Multiplier that amplifies position size relative to margin (1x-125x) |\n| **Margin** | Collateral required to open and maintain a position |\n| **Cross Margin** | All available balance used as margin for positions |\n| **Isolated Margin** | Specific amount of margin assigned to a single position |\n| **Funding Rate** | Periodic payment between long and short positions to keep price aligned with spot |\n| **Mark Price** | Fair price used for PnL and liquidation calculations |\n| **Index Price** | Average price across major spot exchanges |\n| **Liquidation** | Forced closure of position when margin is insufficient |\n| **PnL** | Profit and Loss (realized or unrealized) |\n| **Maker** | Order that adds liquidity (rests in order book) |\n| **Taker** | Order that removes liquidity (matches immediately) |\n| **USDT-M** | USDT-margined (linear) futures contracts |\n| **Open Interest** | Total number of outstanding contracts |\n\n---\n\n# ❓ FAQ\n\n**Q: What is the minimum order size?**\nA: Varies by symbol. Check `/capi/v2/market/contracts` for `size_increment`.\n\n**Q: How do I check my order status?**\nA: Use `/capi/v2/order/detail` with your order ID or `/capi/v2/order/current` for all open orders.\n\n**Q: Why did my order get rejected?**\nA: Common reasons: insufficient margin, invalid price, symbol not tradeable, rate limit exceeded.\n\n**Q: How accurate should my timestamp be?**\nA: Within ±30 seconds of server time. Use `/capi/v2/market/time` to sync.\n\n**Q: Can I use the same client_oid for multiple orders?**\nA: No, each `client_oid` must be unique within 24 hours.\n\n**Q: What happens if my request times out?**\nA: Check order status before retrying. The order may have been placed successfully.\n\n---\n\n# 🔗 Resources\n\n- **Base URL**: `https://api-contract.weex.com`\n- **Official Website**: [weex.com](https://www.weex.com)\n- **Support Center**: [weex.com/help](https://www.weex.com/help)\n- **API Status**: Check our status page for any ongoing issues\n",
+      "version": "2.0",
+      "contact": {
+        "name": "WEEX API Support",
+        "url": "https://www.weex.com"
+      },
+      "license": {
+        "name": "Proprietary",
+        "url": "https://www.weex.com/terms"
+      }
+    },
+    "servers": [
+      {
+        "url": "https://api-contract.weex.com",
+        "description": "WEEX Futures Trading API Server"
+      }
+    ],
+    "security": [
+      {
+        "WeexApiKey": [],
+        "WeexApiSecret": [],
+        "WeexPassphrase": []
+      }
+    ],
+    "components": {
+      "securitySchemes": {
+        "WeexApiKey": {
+          "type": "apiKey",
+          "in": "header",
+          "name": "ACCESS-KEY",
+          "description": "Enter your WEEX API Key"
+        },
+        "WeexApiSecret": {
+          "type": "apiKey",
+          "in": "header",
+          "name": "ACCESS-SIGN",
+          "description": "Enter your WEEX API Secret (System will calculate the signature)"
+        },
+        "WeexPassphrase": {
+          "type": "apiKey",
+          "in": "header",
+          "name": "ACCESS-PASSPHRASE",
+          "description": "Enter your WEEX API Passphrase"
+        }
+      },
+      "schemas": {
+        "ServerTime": {
+          "type": "object",
+          "properties": {
+            "epoch": {
+              "type": "string",
+              "description": "Unix timestamp in UTC time zone"
+            },
+            "iso": {
+              "type": "string",
+              "description": "ISO 8601 standard time format"
+            },
+            "timestamp": {
+              "type": "integer",
+              "description": "Server time Unix millisecond timestamp"
+            }
+          }
+        },
+        "Symbol": {
+          "type": "string",
+          "description": "Trading pair symbol (e.g., cmt_btcusdt)"
+        },
+        "TickerInfo": {
+          "type": "object",
+          "properties": {
+            "symbol": {
+              "type": "string",
+              "description": "Trading pair"
+            },
+            "last": {
+              "type": "string",
+              "description": "Latest execution price"
+            },
+            "best_ask": {
+              "type": "string",
+              "description": "Ask price"
+            },
+            "best_bid": {
+              "type": "string",
+              "description": "Bid price"
+            },
+            "high_24h": {
+              "type": "string",
+              "description": "Highest price in the last 24 hours"
+            },
+            "low_24h": {
+              "type": "string",
+              "description": "Lowest price in the last 24 hours"
+            },
+            "volume_24h": {
+              "type": "string",
+              "description": "Trading volume of quote currency"
+            },
+            "timestamp": {
+              "type": "string",
+              "description": "System timestamp Unix millisecond timestamp"
+            },
+            "priceChangePercent": {
+              "type": "string",
+              "description": "Price increase or decrease (24 hours)"
+            },
+            "base_volume": {
+              "type": "string",
+              "description": "Trading volume of base currency"
+            },
+            "markPrice": {
+              "type": "string",
+              "description": "Mark price"
+            },
+            "indexPrice": {
+              "type": "string",
+              "description": "Index price"
+            }
+          }
+        },
+        "OrderResponse": {
+          "type": "object",
+          "properties": {
+            "client_oid": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Client-generated order identifier"
+            },
+            "order_id": {
+              "type": "string",
+              "description": "Order ID"
+            }
+          }
+        },
+        "SuccessResponse": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string",
+              "description": "Response code, \"00000\" indicates success"
+            },
+            "msg": {
+              "type": "string",
+              "description": "Response message"
+            },
+            "requestTime": {
+              "type": "integer",
+              "description": "Return time Unix millisecond timestamp"
+            },
+            "data": {
+              "type": "string",
+              "description": "Response data"
+            }
+          }
+        },
+        "ErrorResponse": {
+          "type": "object",
+          "required": [
+            "code",
+            "msg"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "description": "Error code identifying the specific error type",
+              "example": "40001"
+            },
+            "msg": {
+              "type": "string",
+              "description": "Human-readable error message",
+              "example": "Invalid request parameter"
+            },
+            "requestTime": {
+              "type": "integer",
+              "description": "Request timestamp in Unix milliseconds",
+              "example": 1716710918113
+            },
+            "data": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Additional error context or null"
+            }
+          }
+        },
+        "BadRequestError": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          ],
+          "example": {
+            "code": "40001",
+            "msg": "Invalid parameter: symbol is required",
+            "requestTime": 1716710918113,
+            "data": null
+          }
+        },
+        "UnauthorizedError": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          ],
+          "example": {
+            "code": "40101",
+            "msg": "Invalid API Key or signature",
+            "requestTime": 1716710918113,
+            "data": null
+          }
+        },
+        "ForbiddenError": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          ],
+          "example": {
+            "code": "40301",
+            "msg": "IP address not whitelisted or permission denied",
+            "requestTime": 1716710918113,
+            "data": null
+          }
+        },
+        "RateLimitError": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          ],
+          "example": {
+            "code": "42901",
+            "msg": "Rate limit exceeded. Please retry after 60 seconds",
+            "requestTime": 1716710918113,
+            "data": null
+          }
+        },
+        "InternalServerError": {
+          "allOf": [
+            {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          ],
+          "example": {
+            "code": "50001",
+            "msg": "Internal server error. Please try again later",
+            "requestTime": 1716710918113,
+            "data": null
+          }
+        }
+      },
+      "responses": {
+        "BadRequest": {
+          "description": "**Bad Request** - The request was invalid or malformed.\n\nCommon causes:\n- Missing required parameters\n- Invalid parameter format\n- Invalid symbol format\n- Invalid order type or side\n",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BadRequestError"
+              }
+            }
+          }
+        },
+        "Unauthorized": {
+          "description": "**Unauthorized** - Authentication failed.\n\nCommon causes:\n- Invalid or missing API Key\n- Invalid signature\n- Expired timestamp (more than 30 seconds difference)\n- Invalid passphrase\n",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnauthorizedError"
+              }
+            }
+          }
+        },
+        "Forbidden": {
+          "description": "**Forbidden** - Access denied.\n\nCommon causes:\n- IP address not in whitelist\n- API key lacks required permissions\n- Account restricted or suspended\n",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForbiddenError"
+              }
+            }
+          }
+        },
+        "RateLimitExceeded": {
+          "description": "**Too Many Requests** - Rate limit exceeded.\n\nResolution:\n- Reduce request frequency\n- Implement exponential backoff\n- Check rate limit headers for remaining quota\n",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RateLimitError"
+              }
+            }
+          }
+        },
+        "InternalError": {
+          "description": "**Internal Server Error** - An unexpected error occurred.\n\nResolution:\n- Retry the request after a short delay\n- Contact support if the issue persists\n- Check API status page for any ongoing issues\n",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InternalServerError"
+              }
+            }
+          }
+        }
+      }
+    },
+    "paths": {
+      "/capi/v2/market/time": {
+        "get": {
+          "tags": [
+            "Market Data"
+          ],
+          "summary": "Get Server Time",
+          "description": "Retrieves the current server time. This endpoint is useful for:\n- Synchronizing local time with server time\n- Calculating accurate timestamps for signature generation\n- Checking API connectivity\n\n**Use Case:** Call this endpoint before authenticated requests to ensure your timestamp is within the acceptable range (±30 seconds).\n",
+          "operationId": "getServerTime",
+          "security": [],
+          "parameters": [],
+          "responses": {
+            "200": {
+              "description": "Server time information",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/ServerTime"
+                  },
+                  "example": {
+                    "epoch": "1716710918.113",
+                    "iso": "2024-05-26T08:08:38.113Z",
+                    "timestamp": 1716710918113
+                  }
+                }
+              }
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/market/contracts": {
+        "get": {
+          "tags": [
+            "Market Data"
+          ],
+          "summary": "Get Futures Information",
+          "description": "Get information about available futures trading pairs.\n\n**Use Cases:**\n- Retrieve all available trading pairs on startup\n- Get specific contract details like leverage limits and fee rates\n- Verify symbol format before placing orders\n\n**Tips:**\n- Cache this data as it changes infrequently\n- Use the `symbol` parameter to get details for a specific pair\n",
+          "operationId": "getFuturesInfo",
+          "security": [],
+          "parameters": [
+            {
+              "name": "symbol",
+              "in": "query",
+              "description": "Trading pair symbol (e.g., cmt_btcusdt). If omitted, returns all contracts.",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "example": "cmt_btcusdt"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Futures contract information",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "symbol": {
+                          "type": "string",
+                          "description": "Trading pair symbol",
+                          "example": "cmt_btcusdt"
+                        },
+                        "underlying_index": {
+                          "type": "string",
+                          "description": "Futures crypto",
+                          "example": "BTC"
+                        },
+                        "quote_currency": {
+                          "type": "string",
+                          "description": "Quote currency",
+                          "example": "USDT"
+                        },
+                        "coin": {
+                          "type": "string",
+                          "description": "Margin token",
+                          "example": "USDT"
+                        },
+                        "contract_val": {
+                          "type": "string",
+                          "description": "Futures face value (contract size)",
+                          "example": "0.001"
+                        },
+                        "delivery": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "Settlement times"
+                        },
+                        "size_increment": {
+                          "type": "string",
+                          "description": "Minimum order quantity increment",
+                          "example": "1"
+                        },
+                        "tick_size": {
+                          "type": "string",
+                          "description": "Minimum price increment",
+                          "example": "0.1"
+                        },
+                        "forwardContractFlag": {
+                          "type": "boolean",
+                          "description": "True if USDT-M (linear) futures",
+                          "example": true
+                        },
+                        "minLeverage": {
+                          "type": "integer",
+                          "description": "Minimum leverage",
+                          "example": 1
+                        },
+                        "maxLeverage": {
+                          "type": "integer",
+                          "description": "Maximum leverage",
+                          "example": 125
+                        },
+                        "makerFeeRate": {
+                          "type": "string",
+                          "description": "Maker fee rate (e.g., 0.0002 = 0.02%)",
+                          "example": "0.0002"
+                        },
+                        "takerFeeRate": {
+                          "type": "string",
+                          "description": "Taker fee rate (e.g., 0.0006 = 0.06%)",
+                          "example": "0.0006"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/market/depth": {
+        "get": {
+          "tags": [
+            "Market Data"
+          ],
+          "summary": "Get OrderBook Depth",
+          "description": "Retrieves the order book depth data for a specific trading pair.\n\n**Use Cases:**\n- Get current bid/ask spread\n- Analyze market liquidity\n- Implement market making strategies\n\n**Response Format:**\n- `asks`: Array of [price, quantity] sorted by price ascending (lowest first)\n- `bids`: Array of [price, quantity] sorted by price descending (highest first)\n",
+          "operationId": "getOrderBookDepth",
+          "security": [],
+          "parameters": [
+            {
+              "name": "symbol",
+              "in": "query",
+              "description": "Trading pair symbol (e.g., cmt_btcusdt)",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "example": "cmt_btcusdt"
+              }
+            },
+            {
+              "name": "limit",
+              "in": "query",
+              "description": "Number of depth levels to return (15 for quick snapshot, 200 for full depth)",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "enum": [
+                  15,
+                  200
+                ],
+                "default": 15
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Order book depth data",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "asks": {
+                        "type": "array",
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "description": "Sell orders [price, quantity] sorted ascending by price",
+                        "example": [
+                          [
+                            "95000.5",
+                            "1.234"
+                          ],
+                          [
+                            "95001.0",
+                            "2.567"
+                          ]
+                        ]
+                      },
+                      "bids": {
+                        "type": "array",
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "description": "Buy orders [price, quantity] sorted descending by price",
+                        "example": [
+                          [
+                            "94999.5",
+                            "0.987"
+                          ],
+                          [
+                            "94999.0",
+                            "1.456"
+                          ]
+                        ]
+                      },
+                      "timestamp": {
+                        "type": "string",
+                        "description": "Unix millisecond timestamp",
+                        "example": "1716710918113"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/market/tickers": {
+        "get": {
+          "tags": [
+            "Market Data"
+          ],
+          "summary": "Get All Tickers",
+          "description": "Retrieves ticker information for all available trading pairs.\n\n**Use Cases:**\n- Build market overview dashboards\n- Find trading opportunities across all pairs\n- Monitor price changes and volume\n",
+          "operationId": "getAllTickers",
+          "security": [],
+          "parameters": [],
+          "responses": {
+            "200": {
+              "description": "All ticker information",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/TickerInfo"
+                    }
+                  }
+                }
+              }
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/market/ticker": {
+        "get": {
+          "tags": [
+            "Market Data"
+          ],
+          "summary": "Get Single Ticker",
+          "description": "Retrieves information for a single trading ticker",
+          "operationId": "getSingleTicker",
+          "security": [],
+          "parameters": [
+            {
+              "name": "symbol",
+              "in": "query",
+              "description": "Trading pair",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "example": "cmt_btcusdt"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Single ticker information",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/TickerInfo"
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/market/trades": {
+        "get": {
+          "tags": [
+            "Market Data"
+          ],
+          "summary": "Get Trades",
+          "description": "Retrieves trade data for a given trading pair",
+          "operationId": "getTrades",
+          "security": [],
+          "parameters": [
+            {
+              "name": "symbol",
+              "in": "query",
+              "description": "Trading pair",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "example": "cmt_btcusdt"
+              }
+            },
+            {
+              "name": "limit",
+              "in": "query",
+              "description": "Number of records to return",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 100,
+                "maximum": 1000
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Trade data",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "ticketId": {
+                          "type": "string",
+                          "description": "Filled order ID"
+                        },
+                        "time": {
+                          "type": "integer",
+                          "description": "Trade time Unix millisecond timestamp"
+                        },
+                        "price": {
+                          "type": "string",
+                          "description": "Trade price"
+                        },
+                        "size": {
+                          "type": "string",
+                          "description": "Trade quantity"
+                        },
+                        "value": {
+                          "type": "string",
+                          "description": "Trade value"
+                        },
+                        "symbol": {
+                          "type": "string",
+                          "description": "Trading pair"
+                        },
+                        "isBestMatch": {
+                          "type": "boolean",
+                          "description": "Best price match indicator"
+                        },
+                        "isBuyerMaker": {
+                          "type": "boolean",
+                          "description": "Buyer maker indicator"
+                        },
+                        "contractVal": {
+                          "type": "string",
+                          "description": "Futures face value"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/market/candles": {
+        "get": {
+          "tags": [
+            "Market Data"
+          ],
+          "summary": "Get Candlestick Data",
+          "description": "Retrieves candlestick data for a trading pair",
+          "operationId": "getCandlestickData",
+          "security": [],
+          "parameters": [
+            {
+              "name": "symbol",
+              "in": "query",
+              "description": "Trading pair",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "example": "cmt_bchusdt"
+              }
+            },
+            {
+              "name": "granularity",
+              "in": "query",
+              "description": "Candlestick interval",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "enum": [
+                  "1m",
+                  "5m",
+                  "15m",
+                  "30m",
+                  "1h",
+                  "4h",
+                  "12h",
+                  "1d",
+                  "1w"
+                ]
+              }
+            },
+            {
+              "name": "limit",
+              "in": "query",
+              "description": "Number of records to return",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 100,
+                "maximum": 1000
+              }
+            },
+            {
+              "name": "priceType",
+              "in": "query",
+              "description": "Price type",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "enum": [
+                  "LAST",
+                  "MARK",
+                  "INDEX"
+                ],
+                "default": "LAST"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Candlestick data",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "array",
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "[timestamp, open, high, low, close, base_volume, quote_volume]"
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/market/index": {
+        "get": {
+          "tags": [
+            "Market Data"
+          ],
+          "summary": "Get Cryptocurrency Index",
+          "description": "Retrieves the cryptocurrency index for a specified trading pair",
+          "operationId": "getCryptocurrencyIndex",
+          "security": [],
+          "parameters": [
+            {
+              "name": "symbol",
+              "in": "query",
+              "description": "Trading pair",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "example": "cmt_bchusdt"
+              }
+            },
+            {
+              "name": "priceType",
+              "in": "query",
+              "description": "Price type",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "enum": [
+                  "MARK",
+                  "INDEX"
+                ],
+                "default": "INDEX"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Cryptocurrency index",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "symbol": {
+                        "type": "string",
+                        "description": "Trading pair"
+                      },
+                      "index": {
+                        "type": "string",
+                        "description": "Index value"
+                      },
+                      "timestamp": {
+                        "type": "string",
+                        "description": "Unix millisecond timestamp"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/market/open_interest": {
+        "get": {
+          "tags": [
+            "Market Data"
+          ],
+          "summary": "Get Open Interest",
+          "description": "Retrieves the open interest for a specific trading pair",
+          "operationId": "getOpenInterest",
+          "security": [],
+          "parameters": [
+            {
+              "name": "symbol",
+              "in": "query",
+              "description": "Trading pair",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "example": "cmt_1000satsusdt"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Open interest data",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "symbol": {
+                          "type": "string",
+                          "description": "Trading pair"
+                        },
+                        "base_volume": {
+                          "type": "string",
+                          "description": "Total open interest of the platform"
+                        },
+                        "target_volume": {
+                          "type": "string",
+                          "description": "Quote Currency Holdings"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "description": "Unix millisecond timestamp"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/market/funding_time": {
+        "get": {
+          "tags": [
+            "Market Data"
+          ],
+          "summary": "Get Next Funding Time",
+          "description": "Retrieves the settlement time for the next funding",
+          "operationId": "getNextFundingTime",
+          "security": [],
+          "parameters": [
+            {
+              "name": "symbol",
+              "in": "query",
+              "description": "Trading pair",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "example": "cmt_bchusdt"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Next funding time",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "symbol": {
+                        "type": "string",
+                        "description": "Trading pair"
+                      },
+                      "fundingTime": {
+                        "type": "integer",
+                        "description": "Settlement time Unix millisecond timestamp"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/market/getHistoryFundRate": {
+        "get": {
+          "tags": [
+            "Market Data"
+          ],
+          "summary": "Get Historical Funding Rates",
+          "description": "Retrieve historical funding rates for a trading pair",
+          "operationId": "getHistoricalFundingRates",
+          "security": [],
+          "parameters": [
+            {
+              "name": "symbol",
+              "in": "query",
+              "description": "Trading pair",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "example": "cmt_bchusdt"
+              }
+            },
+            {
+              "name": "limit",
+              "in": "query",
+              "description": "Number of records to return",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 10,
+                "maximum": 100
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Historical funding rates",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "symbol": {
+                          "type": "string",
+                          "description": "Trading pair"
+                        },
+                        "fundingRate": {
+                          "type": "string",
+                          "description": "Funding rate"
+                        },
+                        "fundingTime": {
+                          "type": "integer",
+                          "description": "Funding fee settlement time Unix millisecond timestamp"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/market/currentFundRate": {
+        "get": {
+          "tags": [
+            "Market Data"
+          ],
+          "summary": "Get Current Funding Rate",
+          "description": "Retrieves the current funding rate for a specific trading pair or all available trading pairs",
+          "operationId": "getCurrentFundingRate",
+          "security": [],
+          "parameters": [
+            {
+              "name": "symbol",
+              "in": "query",
+              "description": "Trading pair",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "example": "cmt_bchusdt"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Current funding rates",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "symbol": {
+                          "type": "string",
+                          "description": "Trading pair"
+                        },
+                        "fundingRate": {
+                          "type": "string",
+                          "description": "Current funding rate"
+                        },
+                        "collectCycle": {
+                          "type": "integer",
+                          "description": "Funding rate settlement cycle (minutes)"
+                        },
+                        "timestamp": {
+                          "type": "integer",
+                          "description": "Funding fee settlement time Unix millisecond timestamp"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/account/getAccounts": {
+        "get": {
+          "tags": [
+            "Account Management"
+          ],
+          "summary": "Get Account List",
+          "description": "Retrieves comprehensive account information including fee settings and leverage configurations.\n\n**Use Cases:**\n- Get account overview on application startup\n- Retrieve current fee rates for cost calculations\n- Check leverage settings across all trading pairs\n\n**Authentication Required:** Yes - ACCESS-KEY, ACCESS-SIGN, ACCESS-PASSPHRASE\n",
+          "operationId": "getAccountList",
+          "parameters": [],
+          "responses": {
+            "200": {
+              "description": "Account information",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "account": {
+                        "type": "object",
+                        "properties": {
+                          "defaultFeeSetting": {
+                            "type": "object",
+                            "properties": {
+                              "is_set_fee_rate": {
+                                "type": "boolean"
+                              },
+                              "taker_fee_rate": {
+                                "type": "string"
+                              },
+                              "maker_fee_rate": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "leverageSetting": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "symbol": {
+                                  "type": "string"
+                                },
+                                "cross_leverage": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "collateral": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "coin": {
+                              "type": "string"
+                            },
+                            "amount": {
+                              "type": "string"
+                            },
+                            "marginMode": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "403": {
+              "$ref": "#/components/responses/Forbidden"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/account/getAccount": {
+        "get": {
+          "tags": [
+            "Account Management"
+          ],
+          "summary": "Get Single Account",
+          "description": "Retrieves detailed information for a single account by coin type.\n\n**Use Cases:**\n- Get specific coin balance and margin information\n- Check available balance before placing orders\n\n**Authentication Required:** Yes\n",
+          "operationId": "getSingleAccount",
+          "parameters": [
+            {
+              "name": "coin",
+              "in": "query",
+              "description": "Coin name (e.g., USDT, BTC)",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "example": "USDT"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Single account information",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "account": {
+                        "type": "object"
+                      },
+                      "collateral": {
+                        "type": "array",
+                        "items": {
+                          "type": "object"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "403": {
+              "$ref": "#/components/responses/Forbidden"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/account/assets": {
+        "get": {
+          "tags": [
+            "Account Management"
+          ],
+          "summary": "Get Account Assets",
+          "description": "Retrieve account assets",
+          "operationId": "getAccountAssets",
+          "parameters": [],
+          "responses": {
+            "200": {
+              "description": "Account assets",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "coinName": {
+                          "type": "string",
+                          "description": "Name of the crypto"
+                        },
+                        "available": {
+                          "type": "string",
+                          "description": "Available asset"
+                        },
+                        "frozen": {
+                          "type": "string",
+                          "description": "Frozen asset"
+                        },
+                        "equity": {
+                          "type": "string",
+                          "description": "Total asset"
+                        },
+                        "unrealizePnl": {
+                          "type": "string",
+                          "description": "Unrealized Profit and Loss"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "403": {
+              "$ref": "#/components/responses/Forbidden"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/account/bills": {
+        "post": {
+          "tags": [
+            "Account Management"
+          ],
+          "summary": "Get Contract Account Bills",
+          "description": "Get Contract Account Bill History",
+          "operationId": "getContractBills",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "coin": {
+                      "type": "string",
+                      "description": "Currency name"
+                    },
+                    "symbol": {
+                      "type": "string",
+                      "description": "Trading pair"
+                    },
+                    "businessType": {
+                      "type": "string",
+                      "description": "Business type"
+                    },
+                    "startTime": {
+                      "type": "integer",
+                      "description": "Start timestamp (milliseconds)"
+                    },
+                    "endTime": {
+                      "type": "integer",
+                      "description": "End timestamp (milliseconds)"
+                    },
+                    "limit": {
+                      "type": "integer",
+                      "description": "Return record limit",
+                      "default": 20,
+                      "maximum": 100
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Account bills",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "hasNextPage": {
+                        "type": "boolean"
+                      },
+                      "items": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "billId": {
+                              "type": "integer"
+                            },
+                            "coin": {
+                              "type": "string"
+                            },
+                            "amount": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "403": {
+              "$ref": "#/components/responses/Forbidden"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/account/settings": {
+        "get": {
+          "tags": [
+            "Account Management"
+          ],
+          "summary": "Get User Settings",
+          "description": "Retrieves user settings for futures trading pairs",
+          "operationId": "getUserSettings",
+          "parameters": [
+            {
+              "name": "symbol",
+              "in": "query",
+              "description": "Trading pair",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "example": "cmt_bchusdt"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "User settings",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "object",
+                      "properties": {
+                        "isolated_long_leverage": {
+                          "type": "string"
+                        },
+                        "isolated_short_leverage": {
+                          "type": "string"
+                        },
+                        "cross_leverage": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "403": {
+              "$ref": "#/components/responses/Forbidden"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/account/leverage": {
+        "post": {
+          "tags": [
+            "Account Management"
+          ],
+          "summary": "Change Leverage",
+          "description": "Changes leverage for a trading pair",
+          "operationId": "changeLeverage",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "symbol",
+                    "marginMode",
+                    "longLeverage",
+                    "shortLeverage"
+                  ],
+                  "properties": {
+                    "symbol": {
+                      "type": "string",
+                      "description": "Trading pair"
+                    },
+                    "marginMode": {
+                      "type": "integer",
+                      "description": "Margin mode (1: Cross, 3: Isolated)",
+                      "enum": [
+                        1,
+                        3
+                      ]
+                    },
+                    "longLeverage": {
+                      "type": "string",
+                      "description": "Long position leverage"
+                    },
+                    "shortLeverage": {
+                      "type": "string",
+                      "description": "Short position leverage"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Leverage change response",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "msg": {
+                        "type": "string"
+                      },
+                      "requestTime": {
+                        "type": "integer"
+                      },
+                      "code": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "403": {
+              "$ref": "#/components/responses/Forbidden"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/account/adjustMargin": {
+        "post": {
+          "tags": [
+            "Account Management"
+          ],
+          "summary": "Adjust Position Margin",
+          "description": "Adjusts the margin for an isolated position",
+          "operationId": "adjustPositionMargin",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "isolatedPositionId",
+                    "collateralAmount"
+                  ],
+                  "properties": {
+                    "coinId": {
+                      "type": "integer",
+                      "description": "Collateral ID (default: 2 for USDT)",
+                      "default": 2
+                    },
+                    "isolatedPositionId": {
+                      "type": "integer",
+                      "description": "Isolated margin position ID"
+                    },
+                    "collateralAmount": {
+                      "type": "string",
+                      "description": "Collateral amount (positive for increase, negative for decrease)"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Margin adjustment response",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "msg": {
+                        "type": "string"
+                      },
+                      "requestTime": {
+                        "type": "integer"
+                      },
+                      "code": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/account/modifyAutoAppendMargin": {
+        "post": {
+          "tags": [
+            "Account Management"
+          ],
+          "summary": "Automatic Margin Top-Up",
+          "description": "Enable or disable automatic margin top-up for isolated positions",
+          "operationId": "modifyAutoMargin",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "positionId",
+                    "autoAppendMargin"
+                  ],
+                  "properties": {
+                    "positionId": {
+                      "type": "integer",
+                      "description": "Isolated margin position ID"
+                    },
+                    "autoAppendMargin": {
+                      "type": "boolean",
+                      "description": "Whether to enable automatic margin call"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Auto margin modification response",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "msg": {
+                        "type": "string"
+                      },
+                      "requestTime": {
+                        "type": "integer"
+                      },
+                      "code": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/account/position/allPosition": {
+        "get": {
+          "tags": [
+            "Position Management"
+          ],
+          "summary": "Get All Positions",
+          "description": "Retrieves all positions held by the user's account",
+          "operationId": "getAllPositions",
+          "parameters": [],
+          "responses": {
+            "200": {
+              "description": "All positions",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "integer",
+                          "description": "Position ID"
+                        },
+                        "symbol": {
+                          "type": "string",
+                          "description": "Trading pair"
+                        },
+                        "side": {
+                          "type": "string",
+                          "description": "Position direction"
+                        },
+                        "size": {
+                          "type": "string",
+                          "description": "Current position size"
+                        },
+                        "leverage": {
+                          "type": "string",
+                          "description": "Position leverage"
+                        },
+                        "unrealizePnl": {
+                          "type": "string",
+                          "description": "Unrealized PnL"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/account/position/singlePosition": {
+        "get": {
+          "tags": [
+            "Position Management"
+          ],
+          "summary": "Get Single Position",
+          "description": "Retrieve details of a single contract position",
+          "operationId": "getSinglePosition",
+          "parameters": [
+            {
+              "name": "symbol",
+              "in": "query",
+              "description": "Trading pair",
+              "required": true,
+              "schema": {
+                "type": "string",
+                "example": "cmt_bchusdt"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Single position details",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "integer"
+                        },
+                        "symbol": {
+                          "type": "string"
+                        },
+                        "side": {
+                          "type": "string"
+                        },
+                        "size": {
+                          "type": "string"
+                        },
+                        "leverage": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/account/position/changeHoldModel": {
+        "post": {
+          "tags": [
+            "Account Management"
+          ],
+          "summary": "Modify User Account Mode",
+          "description": "Modify the user's account mode for a specific trading pair",
+          "operationId": "modifyAccountMode",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "symbol",
+                    "marginMode"
+                  ],
+                  "properties": {
+                    "symbol": {
+                      "type": "string",
+                      "description": "Trading pair"
+                    },
+                    "marginMode": {
+                      "type": "integer",
+                      "description": "Margin mode (1: Cross Mode, 3: Isolated Mode)",
+                      "enum": [
+                        1,
+                        3
+                      ]
+                    },
+                    "separatedMode": {
+                      "type": "integer",
+                      "description": "Position segregation mode (1: Combined mode)",
+                      "enum": [
+                        1
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Account mode modification response",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "msg": {
+                        "type": "string"
+                      },
+                      "requestTime": {
+                        "type": "integer"
+                      },
+                      "code": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/order/placeOrder": {
+        "post": {
+          "tags": [
+            "Order Management"
+          ],
+          "summary": "Place Order",
+          "description": "Place a new futures order on the platform.\n\n**Order Types (type parameter):**\n- `1`: Open Long - Buy to open a long position\n- `2`: Open Short - Sell to open a short position\n- `3`: Close Long - Sell to close a long position\n- `4`: Close Short - Buy to close a short position\n\n**Execution Types (order_type parameter):**\n- `0`: Normal order (default)\n- `1`: Post-only (maker only, rejected if would match immediately)\n- `2`: Fill or Kill (FOK) - Execute entirely or cancel\n- `3`: Immediate or Cancel (IOC) - Execute any available, cancel rest\n\n**Price Types (match_price parameter):**\n- `0`: Limit order - uses the `price` parameter\n- `1`: Market order - ignores `price`, executes at best available\n\n**Authentication Required:** Yes - ACCESS-KEY, ACCESS-SIGN, ACCESS-PASSPHRASE\n\n**Workflow:**\n1. Check available balance using `/capi/v2/account/assets`\n2. Verify symbol exists using `/capi/v2/market/contracts`\n3. Place order with this endpoint\n4. Monitor order status using `/capi/v2/order/detail`\n",
+          "operationId": "placeOrder",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "symbol",
+                    "client_oid",
+                    "size",
+                    "type",
+                    "order_type",
+                    "match_price",
+                    "price"
+                  ],
+                  "properties": {
+                    "symbol": {
+                      "type": "string",
+                      "description": "Trading pair symbol",
+                      "example": "cmt_btcusdt"
+                    },
+                    "client_oid": {
+                      "type": "string",
+                      "description": "Custom order ID for tracking (≤40 characters, alphanumeric)",
+                      "maxLength": 40,
+                      "example": "my_order_001"
+                    },
+                    "size": {
+                      "type": "string",
+                      "description": "Order quantity in contracts (must be positive)",
+                      "example": "10"
+                    },
+                    "type": {
+                      "type": "string",
+                      "description": "Order direction: 1=Open Long, 2=Open Short, 3=Close Long, 4=Close Short",
+                      "enum": [
+                        "1",
+                        "2",
+                        "3",
+                        "4"
+                      ],
+                      "example": "1"
+                    },
+                    "order_type": {
+                      "type": "string",
+                      "description": "Execution type: 0=Normal, 1=Post-only, 2=FOK, 3=IOC",
+                      "enum": [
+                        "0",
+                        "1",
+                        "2",
+                        "3"
+                      ],
+                      "example": "0"
+                    },
+                    "match_price": {
+                      "type": "string",
+                      "description": "Price type: 0=Limit order, 1=Market order",
+                      "enum": [
+                        "0",
+                        "1"
+                      ],
+                      "example": "0"
+                    },
+                    "price": {
+                      "type": "string",
+                      "description": "Order price (required for limit orders, ignored for market orders)",
+                      "example": "95000.5"
+                    },
+                    "presetTakeProfitPrice": {
+                      "type": "number",
+                      "description": "Optional take-profit trigger price",
+                      "example": 100000
+                    },
+                    "presetStopLossPrice": {
+                      "type": "number",
+                      "description": "Optional stop-loss trigger price",
+                      "example": 90000
+                    },
+                    "marginMode": {
+                      "type": "integer",
+                      "description": "Margin mode: 1=Cross Mode, 3=Isolated Mode",
+                      "enum": [
+                        1,
+                        3
+                      ],
+                      "default": 1,
+                      "example": 1
+                    }
+                  }
+                },
+                "example": {
+                  "symbol": "cmt_btcusdt",
+                  "client_oid": "my_order_001",
+                  "size": "10",
+                  "type": "1",
+                  "order_type": "0",
+                  "match_price": "0",
+                  "price": "95000.5",
+                  "marginMode": 1
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Order placed successfully",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "$ref": "#/components/schemas/OrderResponse"
+                  },
+                  "example": {
+                    "client_oid": "my_order_001",
+                    "order_id": "1234567890"
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "403": {
+              "$ref": "#/components/responses/Forbidden"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/order/cancel_order": {
+        "post": {
+          "tags": [
+            "Order Management"
+          ],
+          "summary": "Cancel Order",
+          "description": "Cancels an existing unfilled or partially filled order.\n\n**Note:** You can cancel by either `orderId` (system-generated) or `clientOid` (your custom ID).\nAt least one identifier must be provided.\n\n**Order States:**\n- Only orders in \"open\" or \"partially_filled\" state can be cancelled\n- Filled orders cannot be cancelled\n\n**Authentication Required:** Yes\n",
+          "operationId": "cancelOrder",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "orderId": {
+                      "type": "string",
+                      "description": "System-generated Order ID",
+                      "example": "1234567890"
+                    },
+                    "clientOid": {
+                      "type": "string",
+                      "description": "Your custom order ID (used during order placement)",
+                      "example": "my_order_001"
+                    }
+                  }
+                },
+                "example": {
+                  "orderId": "1234567890"
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Order cancellation response",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "order_id": {
+                        "type": "string",
+                        "description": "The cancelled order ID"
+                      },
+                      "client_oid": {
+                        "type": "string",
+                        "description": "Your custom order ID"
+                      },
+                      "result": {
+                        "type": "boolean",
+                        "description": "True if cancellation was successful"
+                      },
+                      "err_msg": {
+                        "type": "string",
+                        "description": "Error message if cancellation failed"
+                      }
+                    }
+                  },
+                  "example": {
+                    "order_id": "1234567890",
+                    "client_oid": "my_order_001",
+                    "result": true,
+                    "err_msg": ""
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "403": {
+              "$ref": "#/components/responses/Forbidden"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/order/detail": {
+        "get": {
+          "tags": [
+            "Order Management"
+          ],
+          "summary": "Get Order Info",
+          "description": "Retrieve detailed information for a single order by its ID",
+          "operationId": "getOrderInfo",
+          "parameters": [
+            {
+              "name": "orderId",
+              "in": "query",
+              "description": "Order ID",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Order details",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "symbol": {
+                        "type": "string"
+                      },
+                      "size": {
+                        "type": "string"
+                      },
+                      "client_oid": {
+                        "type": "string"
+                      },
+                      "order_id": {
+                        "type": "string"
+                      },
+                      "price": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/order/history": {
+        "get": {
+          "tags": [
+            "Order Management"
+          ],
+          "summary": "Get History Orders",
+          "description": "Retrieves historical order data",
+          "operationId": "getOrderHistory",
+          "parameters": [
+            {
+              "name": "symbol",
+              "in": "query",
+              "description": "Trading pair",
+              "required": false,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "pageSize",
+              "in": "query",
+              "description": "Items per page",
+              "required": false,
+              "schema": {
+                "type": "integer"
+              }
+            },
+            {
+              "name": "createDate",
+              "in": "query",
+              "description": "Creation time Unix millisecond timestamp",
+              "required": false,
+              "schema": {
+                "type": "integer"
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Historical orders",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/order/current": {
+        "get": {
+          "tags": [
+            "Order Management"
+          ],
+          "summary": "Get Current Orders",
+          "description": "Retrieves a list of current open orders",
+          "operationId": "getCurrentOrders",
+          "parameters": [
+            {
+              "name": "symbol",
+              "in": "query",
+              "description": "Trading pair",
+              "required": false,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "orderId",
+              "in": "query",
+              "description": "Order ID",
+              "required": false,
+              "schema": {
+                "type": "integer"
+              }
+            },
+            {
+              "name": "startTime",
+              "in": "query",
+              "description": "Record start time Unix millisecond timestamp",
+              "required": false,
+              "schema": {
+                "type": "integer"
+              }
+            },
+            {
+              "name": "endTime",
+              "in": "query",
+              "description": "Record end time Unix millisecond timestamp",
+              "required": false,
+              "schema": {
+                "type": "integer"
+              }
+            },
+            {
+              "name": "limit",
+              "in": "query",
+              "description": "Limit number",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 100,
+                "maximum": 100
+              }
+            },
+            {
+              "name": "page",
+              "in": "query",
+              "description": "Page number",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 0
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Current orders",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/order/fills": {
+        "get": {
+          "tags": [
+            "Order Management"
+          ],
+          "summary": "Get Fills",
+          "description": "Retrieves transaction details (fills) for orders",
+          "operationId": "getFills",
+          "parameters": [
+            {
+              "name": "symbol",
+              "in": "query",
+              "description": "Trading pair name",
+              "required": false,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "orderId",
+              "in": "query",
+              "description": "Order ID",
+              "required": false,
+              "schema": {
+                "type": "integer"
+              }
+            },
+            {
+              "name": "startTime",
+              "in": "query",
+              "description": "Start timestamp Unix millisecond timestamp",
+              "required": false,
+              "schema": {
+                "type": "integer"
+              }
+            },
+            {
+              "name": "endTime",
+              "in": "query",
+              "description": "End timestamp Unix millisecond timestamp",
+              "required": false,
+              "schema": {
+                "type": "integer"
+              }
+            },
+            {
+              "name": "limit",
+              "in": "query",
+              "description": "Number of queries",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 100,
+                "maximum": 100
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Fill details",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "list": {
+                        "type": "array",
+                        "items": {
+                          "type": "object"
+                        }
+                      },
+                      "nextFlag": {
+                        "type": "boolean"
+                      },
+                      "totals": {
+                        "type": "integer"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/order/plan_order": {
+        "post": {
+          "tags": [
+            "Order Management"
+          ],
+          "summary": "Place Trigger Order",
+          "description": "Place a trigger order",
+          "operationId": "placeTriggerOrder",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "symbol",
+                    "client_oid",
+                    "size",
+                    "type",
+                    "match_type",
+                    "execute_price",
+                    "trigger_price"
+                  ],
+                  "properties": {
+                    "symbol": {
+                      "type": "string",
+                      "description": "Trading pair"
+                    },
+                    "client_oid": {
+                      "type": "string",
+                      "description": "Custom order ID (≤40 characters)"
+                    },
+                    "size": {
+                      "type": "string",
+                      "description": "Order quantity in lots"
+                    },
+                    "type": {
+                      "type": "string",
+                      "description": "Order type",
+                      "enum": [
+                        "1",
+                        "2",
+                        "3",
+                        "4"
+                      ]
+                    },
+                    "match_type": {
+                      "type": "string",
+                      "description": "Match type",
+                      "enum": [
+                        "0",
+                        "1"
+                      ]
+                    },
+                    "execute_price": {
+                      "type": "string",
+                      "description": "Execution price"
+                    },
+                    "trigger_price": {
+                      "type": "string",
+                      "description": "Trigger price"
+                    },
+                    "marginMode": {
+                      "type": "integer",
+                      "description": "Margin mode (1: Cross Mode, 3: Isolated Mode)",
+                      "enum": [
+                        1,
+                        3
+                      ],
+                      "default": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Trigger order placement response",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "client_oid": {
+                        "type": "string"
+                      },
+                      "order_id": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/order/cancel_plan": {
+        "post": {
+          "tags": [
+            "Order Management"
+          ],
+          "summary": "Cancel Trigger Order",
+          "description": "Cancels a pending (trigger) order",
+          "operationId": "cancelTriggerOrder",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "orderId"
+                  ],
+                  "properties": {
+                    "orderId": {
+                      "type": "string",
+                      "description": "Order ID"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Trigger order cancellation response",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "order_id": {
+                        "type": "string"
+                      },
+                      "client_oid": {
+                        "type": "string"
+                      },
+                      "result": {
+                        "type": "boolean"
+                      },
+                      "err_msg": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/order/currentPlan": {
+        "get": {
+          "tags": [
+            "Order Management"
+          ],
+          "summary": "Get Current Plan Orders",
+          "description": "Retrieves a list of current plan orders",
+          "operationId": "getCurrentPlanOrders",
+          "parameters": [
+            {
+              "name": "symbol",
+              "in": "query",
+              "description": "Trading pair",
+              "required": false,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "orderId",
+              "in": "query",
+              "description": "Order ID",
+              "required": false,
+              "schema": {
+                "type": "integer"
+              }
+            },
+            {
+              "name": "startTime",
+              "in": "query",
+              "description": "Record start time Unix millisecond timestamp",
+              "required": false,
+              "schema": {
+                "type": "integer"
+              }
+            },
+            {
+              "name": "endTime",
+              "in": "query",
+              "description": "Record end time Unix millisecond timestamp",
+              "required": false,
+              "schema": {
+                "type": "integer"
+              }
+            },
+            {
+              "name": "limit",
+              "in": "query",
+              "description": "Limit number",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 100,
+                "maximum": 100
+              }
+            },
+            {
+              "name": "page",
+              "in": "query",
+              "description": "Page number",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 0
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Current plan orders",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/order/historyPlan": {
+        "get": {
+          "tags": [
+            "Order Management"
+          ],
+          "summary": "Get History Plan Orders",
+          "description": "Retrieves historical plan order data",
+          "operationId": "getHistoryPlanOrders",
+          "parameters": [
+            {
+              "name": "symbol",
+              "in": "query",
+              "description": "Trading pair",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "startTime",
+              "in": "query",
+              "description": "Start time Unix millisecond timestamp",
+              "required": false,
+              "schema": {
+                "type": "integer"
+              }
+            },
+            {
+              "name": "endTime",
+              "in": "query",
+              "description": "End time Unix millisecond timestamp",
+              "required": false,
+              "schema": {
+                "type": "integer"
+              }
+            },
+            {
+              "name": "delegateType",
+              "in": "query",
+              "description": "Order type",
+              "required": false,
+              "schema": {
+                "type": "integer"
+              }
+            },
+            {
+              "name": "pageSize",
+              "in": "query",
+              "description": "Items per page",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 100,
+                "maximum": 100
+              }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Historical plan orders",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "list": {
+                        "type": "array",
+                        "items": {
+                          "type": "object"
+                        }
+                      },
+                      "nextPage": {
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/order/closePositions": {
+        "post": {
+          "tags": [
+            "Order Management"
+          ],
+          "summary": "Close All Positions",
+          "description": "Closes all open positions",
+          "operationId": "closeAllPositions",
+          "requestBody": {
+            "required": false,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "symbol": {
+                      "type": "string",
+                      "description": "Trading pair (if not provided, all positions will be closed)"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Position closure response",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "positionId": {
+                          "type": "integer"
+                        },
+                        "successOrderId": {
+                          "type": "integer"
+                        },
+                        "errorMessage": {
+                          "type": "string"
+                        },
+                        "success": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/order/cancelAllOrders": {
+        "post": {
+          "tags": [
+            "Order Management"
+          ],
+          "summary": "Cancel All Orders",
+          "description": "Cancels all outstanding orders for a user",
+          "operationId": "cancelAllOrders",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "symbol": {
+                      "type": "string",
+                      "description": "Trading pair (if not provided, all trading pairs will be cancelled)"
+                    },
+                    "cancelOrderType": {
+                      "type": "string",
+                      "description": "Order type to cancel",
+                      "enum": [
+                        "normal",
+                        "plan"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "cancelOrderType"
+                  ]
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Cancel all orders response",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "orderId": {
+                          "type": "integer"
+                        },
+                        "success": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/order/placeTpSlOrder": {
+        "post": {
+          "tags": [
+            "Order Management"
+          ],
+          "summary": "Place TP/SL Order",
+          "description": "Place a Take-Profit/Stop-Loss order",
+          "operationId": "placeTpSlOrder",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "symbol",
+                    "clientOrderId",
+                    "planType",
+                    "triggerPrice",
+                    "size",
+                    "positionSide"
+                  ],
+                  "properties": {
+                    "symbol": {
+                      "type": "string",
+                      "description": "Trading pair"
+                    },
+                    "clientOrderId": {
+                      "type": "string",
+                      "description": "Custom order ID (≤40 characters)",
+                      "maxLength": 40
+                    },
+                    "planType": {
+                      "type": "string",
+                      "description": "TP/SL type",
+                      "enum": [
+                        "profit_plan",
+                        "loss_plan"
+                      ]
+                    },
+                    "triggerPrice": {
+                      "type": "string",
+                      "description": "Trigger price"
+                    },
+                    "executePrice": {
+                      "type": "string",
+                      "description": "Execution price (0 for market price)"
+                    },
+                    "size": {
+                      "type": "string",
+                      "description": "Order quantity"
+                    },
+                    "positionSide": {
+                      "type": "string",
+                      "description": "Position direction",
+                      "enum": [
+                        "long",
+                        "short"
+                      ]
+                    },
+                    "marginMode": {
+                      "type": "integer",
+                      "description": "Margin mode (1: Cross Mode, 3: Isolated Mode)",
+                      "enum": [
+                        1,
+                        3
+                      ],
+                      "default": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "TP/SL order placement response",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "orderId": {
+                          "type": "integer"
+                        },
+                        "success": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/order/modifyTpSlOrder": {
+        "post": {
+          "tags": [
+            "Order Management"
+          ],
+          "summary": "Modify TP/SL Order",
+          "description": "Modifies an existing Take Profit/Stop Loss (TP/SL) order",
+          "operationId": "modifyTpSlOrder",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "orderId",
+                    "triggerPrice"
+                  ],
+                  "properties": {
+                    "orderId": {
+                      "type": "integer",
+                      "description": "Order ID of the TP/SL order to modify"
+                    },
+                    "triggerPrice": {
+                      "type": "string",
+                      "description": "New trigger price"
+                    },
+                    "executePrice": {
+                      "type": "string",
+                      "description": "New execution price (0 for market price)"
+                    },
+                    "triggerPriceType": {
+                      "type": "integer",
+                      "description": "Trigger price type (1: Last price, 3: Mark price)",
+                      "enum": [
+                        1,
+                        3
+                      ],
+                      "default": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "TP/SL order modification response",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string"
+                      },
+                      "msg": {
+                        "type": "string"
+                      },
+                      "requestTime": {
+                        "type": "integer"
+                      },
+                      "data": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      },
+      "/capi/v2/order/uploadAiLog": {
+        "post": {
+          "tags": [
+            "AI Integration"
+          ],
+          "summary": "Upload AI Log",
+          "description": "Upload AI log data for BUIDLs entering the live trading phase. \nThe AI log must contain model version, input/output data, and order execution details to verify AI involvement and compliance.\nOnly approved UIDs on the official allowlist may submit data.\n",
+          "operationId": "uploadAiLog",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "stage",
+                    "model",
+                    "input",
+                    "output",
+                    "explanation"
+                  ],
+                  "properties": {
+                    "orderId": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "description": "The order ID returned from WEEX order API"
+                    },
+                    "stage": {
+                      "type": "string",
+                      "description": "Trading stage where AI participated"
+                    },
+                    "model": {
+                      "type": "string",
+                      "description": "The name or version of the AI model used"
+                    },
+                    "input": {
+                      "type": "object",
+                      "description": "The prompt, query, or input text given to the AI model"
+                    },
+                    "output": {
+                      "type": "object",
+                      "description": "The AI model's generated output"
+                    },
+                    "explanation": {
+                      "type": "string",
+                      "description": "A concise explanation summarizing the AI's analysis and reasoning",
+                      "maxLength": 1000
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "AI log upload response",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "description": "Request status code, \"00000\" indicates success"
+                      },
+                      "msg": {
+                        "type": "string",
+                        "description": "Request result description, \"success\" indicates success"
+                      },
+                      "requestTime": {
+                        "type": "integer",
+                        "description": "Request timestamp (milliseconds)"
+                      },
+                      "data": {
+                        "type": "string",
+                        "description": "Returned business data, \"upload success\" indicates upload successful"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "$ref": "#/components/responses/BadRequest"
+            },
+            "401": {
+              "$ref": "#/components/responses/Unauthorized"
+            },
+            "403": {
+              "$ref": "#/components/responses/Forbidden"
+            },
+            "429": {
+              "$ref": "#/components/responses/RateLimitExceeded"
+            },
+            "500": {
+              "$ref": "#/components/responses/InternalError"
+            }
+          }
+        }
+      }
+    },
+    "x-websocket": {
+      "description": "WebSocket API for real-time market data and account updates",
+      "servers": [
+        {
+          "url": "wss://ws-contract.weex.com/v2/ws/public",
+          "description": "Public WebSocket endpoint for market data (no authentication required)"
+        },
+        {
+          "url": "wss://ws-contract.weex.com/v2/ws/private",
+          "description": "Private WebSocket endpoint for account data (authentication required)"
+        }
+      ],
+      "connection": {
+        "limits": {
+          "connections_per_ip": "300 requests per 5 minutes, max 100 concurrent",
+          "subscriptions_per_connection": "240 operations per hour, max 100 channels"
+        },
+        "heartbeat": {
+          "description": "Server sends ping messages periodically. Client must respond with pong to maintain connection.",
+          "ping_format": {
+            "event": "ping",
+            "time": "1693208170000"
+          },
+          "pong_format": {
+            "event": "pong",
+            "time": "1693208170000"
+          },
+          "max_missed_pongs": 5
+        },
+        "authentication": {
+          "description": "Private channels require header authentication",
+          "headers": {
+            "User-Agent": "Client identification",
+            "ACCESS-KEY": "API key",
+            "ACCESS-PASSPHRASE": "API passphrase",
+            "ACCESS-TIMESTAMP": "Unix millisecond timestamp",
+            "ACCESS-SIGN": "Base64(HMAC-SHA256(secret, timestamp + '/v2/ws/private'))"
+          }
+        }
+      },
+      "channels": {
+        "public": {
+          "ticker": {
+            "description": "Real-time market ticker data with latest price, 24h high/low, volume",
+            "channel_format": "ticker.{contractId}",
+            "example_channel": "ticker.cmt_btcusdt",
+            "subscribe": {
+              "event": "subscribe",
+              "channel": "ticker.cmt_btcusdt"
+            },
+            "subscribe_response": {
+              "event": "subscribed",
+              "channel": "ticker.cmt_btcusdt"
+            },
+            "payload": {
+              "event": "payload",
+              "channel": "ticker.cmt_btcusdt",
+              "data": [
+                {
+                  "symbol": "cmt_btcusdt",
+                  "priceChange": "-2055.6",
+                  "priceChangePercent": "-0.019637",
+                  "trades": "28941",
+                  "size": "176145.66489",
+                  "value": "18115688543.1",
+                  "high": "104692.2",
+                  "low": "100709.6",
+                  "lastPrice": "102623.9",
+                  "markPrice": "102623.9",
+                  "indexPrice": "102988.5"
+                }
+              ]
+            },
+            "fields": {
+              "symbol": "Trading pair symbol",
+              "priceChange": "Price change in 24h",
+              "priceChangePercent": "Price change percentage in 24h",
+              "trades": "Number of trades in 24h",
+              "size": "Trading volume (base currency)",
+              "value": "Trading value (quote currency)",
+              "high": "24h high price",
+              "low": "24h low price",
+              "lastPrice": "Latest execution price",
+              "markPrice": "Mark price for liquidation",
+              "indexPrice": "Index price from spot exchanges"
+            }
+          },
+          "depth": {
+            "description": "Order book depth data with configurable levels",
+            "channel_format": "depth.{contractId}.{levels}",
+            "example_channel": "depth.cmt_btcusdt.15",
+            "levels": [
+              5,
+              15,
+              50,
+              200
+            ],
+            "subscribe": {
+              "event": "subscribe",
+              "channel": "depth.cmt_btcusdt.15"
+            },
+            "subscribe_response": {
+              "event": "subscribed",
+              "channel": "depth.cmt_btcusdt.15"
+            },
+            "payload": {
+              "event": "payload",
+              "channel": "depth.cmt_btcusdt.15",
+              "data": [
+                {
+                  "startVersion": "3644174246",
+                  "endVersion": "3644174270",
+                  "level": 15,
+                  "depthType": "CHANGED",
+                  "symbol": "cmt_btcusdt",
+                  "asks": [
+                    {
+                      "price": "103436.1",
+                      "size": "0.91500"
+                    }
+                  ],
+                  "bids": [
+                    {
+                      "price": "103435.9",
+                      "size": "2.40500"
+                    }
+                  ]
+                }
+              ]
+            },
+            "fields": {
+              "depthType": "SNAPSHOT for full book, CHANGED for incremental",
+              "asks": "Array of {price, size} sorted ascending by price",
+              "bids": "Array of {price, size} sorted descending by price"
+            }
+          },
+          "trades": {
+            "description": "Real-time public trades (taker orders)",
+            "channel_format": "trades.{contractId}",
+            "example_channel": "trades.cmt_btcusdt",
+            "subscribe": {
+              "event": "subscribe",
+              "channel": "trades.cmt_btcusdt"
+            },
+            "subscribe_response": {
+              "event": "subscribed",
+              "channel": "trades.cmt_btcusdt"
+            },
+            "payload": {
+              "event": "payload",
+              "channel": "trades.cmt_btcusdt",
+              "data": [
+                {
+                  "time": "1747131727502",
+                  "price": "103337.5",
+                  "size": "0.01600",
+                  "value": "1653.400000",
+                  "buyerMaker": false
+                }
+              ]
+            },
+            "fields": {
+              "time": "Trade timestamp in milliseconds",
+              "price": "Execution price",
+              "size": "Trade size (base currency)",
+              "value": "Trade value (quote currency)",
+              "buyerMaker": "true if buyer was the maker (sell order matched)"
+            }
+          },
+          "kline": {
+            "description": "Candlestick/K-line data",
+            "channel_format": "kline.{priceType}.{contractId}.{interval}",
+            "example_channel": "kline.LAST_PRICE.cmt_btcusdt.MINUTE_1",
+            "price_types": [
+              "LAST_PRICE",
+              "MARK_PRICE",
+              "INDEX_PRICE"
+            ],
+            "intervals": [
+              "MINUTE_1",
+              "MINUTE_5",
+              "MINUTE_15",
+              "MINUTE_30",
+              "HOUR_1",
+              "HOUR_4",
+              "HOUR_12",
+              "DAY_1",
+              "WEEK_1"
+            ],
+            "subscribe": {
+              "event": "subscribe",
+              "channel": "kline.LAST_PRICE.cmt_btcusdt.MINUTE_1"
+            },
+            "subscribe_response": {
+              "event": "subscribed",
+              "channel": "kline.LAST_PRICE.cmt_btcusdt.MINUTE_1"
+            },
+            "payload": {
+              "event": "payload",
+              "type": "change",
+              "channel": "kline.LAST_PRICE.cmt_btcusdt.MINUTE_1",
+              "data": [
+                {
+                  "symbol": "cmt_btcusdt",
+                  "klineTime": "1747125660000",
+                  "size": "23.76600",
+                  "value": "2442678.713400",
+                  "high": "102784.6",
+                  "low": "102760.6",
+                  "open": "102760.6",
+                  "close": "102764.0"
+                }
+              ]
+            },
+            "fields": {
+              "klineTime": "Candle start timestamp",
+              "open": "Opening price",
+              "high": "Highest price",
+              "low": "Lowest price",
+              "close": "Closing price",
+              "size": "Volume (base currency)",
+              "value": "Value (quote currency)"
+            }
+          }
+        },
+        "private": {
+          "account": {
+            "description": "Account balance updates (requires authentication)",
+            "channel_format": "account",
+            "subscribe": {
+              "event": "subscribe",
+              "channel": "account"
+            },
+            "fields": {
+              "coinName": "Asset name (e.g., USDT)",
+              "available": "Available balance",
+              "equity": "Total equity",
+              "frozen": "Frozen balance",
+              "unrealizedPL": "Unrealized profit/loss"
+            }
+          },
+          "positions": {
+            "description": "Position updates (requires authentication)",
+            "channel_format": "positions",
+            "subscribe": {
+              "event": "subscribe",
+              "channel": "positions"
+            },
+            "fields": {
+              "symbol": "Trading pair",
+              "holdSide": "Position side (LONG/SHORT)",
+              "total": "Position size",
+              "available": "Available to close",
+              "averageOpenPrice": "Average entry price",
+              "unrealizedPL": "Unrealized PnL",
+              "leverage": "Position leverage"
+            }
+          },
+          "orders": {
+            "description": "Order status updates (requires authentication)",
+            "channel_format": "orders",
+            "subscribe": {
+              "event": "subscribe",
+              "channel": "orders"
+            },
+            "fields": {
+              "orderId": "Order ID",
+              "clientOid": "Client order ID",
+              "symbol": "Trading pair",
+              "size": "Order size",
+              "filledQty": "Filled quantity",
+              "price": "Order price",
+              "state": "Order state (new/partially_filled/filled/cancelled)"
+            }
+          },
+          "fills": {
+            "description": "Trade fill notifications (requires authentication)",
+            "channel_format": "fills",
+            "subscribe": {
+              "event": "subscribe",
+              "channel": "fills"
+            },
+            "fields": {
+              "orderId": "Order ID",
+              "tradeId": "Trade ID",
+              "symbol": "Trading pair",
+              "price": "Fill price",
+              "size": "Fill size",
+              "fee": "Trading fee",
+              "feeCoin": "Fee currency"
+            }
+          }
+        }
+      },
+      "message_formats": {
+        "subscribe": {
+          "event": "subscribe",
+          "channel": "channel_name"
+        },
+        "unsubscribe": {
+          "event": "unsubscribe",
+          "channel": "channel_name"
+        },
+        "subscribed": {
+          "event": "subscribed",
+          "channel": "channel_name"
+        },
+        "unsubscribed": {
+          "event": "unsubscribed",
+          "channel": "channel_name"
+        },
+        "error": {
+          "event": "error",
+          "code": "ERROR_CODE",
+          "msg": "Error message"
+        },
+        "payload": {
+          "event": "payload",
+          "channel": "channel_name",
+          "data": []
+        }
+      }
+    }
+  }

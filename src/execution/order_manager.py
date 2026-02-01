@@ -12,6 +12,8 @@ Order Flow:
 4. Risk validation before execution
 5. Order placement with preset SL/TP
 6. Fill tracking and result reporting
+
+Now uses the exchange abstraction layer (src.exchange) for multi-exchange support.
 """
 
 from __future__ import annotations
@@ -23,16 +25,19 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Literal
 
-from src.data.rest_client import (
-    OrderRequest,
-    OrderResult,
+from src.exchange.exceptions import ExchangeError
+from src.exchange.models import (
     OrderSide,
     OrderType,
     PositionSide,
-    RESTClient,
-    RESTClientError,
     TimeInForce,
+    UnifiedOrder,
+    UnifiedOrderResult,
 )
+from src.exchange.protocols import ExchangeRESTProtocol
+
+# Backwards compatibility: keep old exception name available
+RESTClientError = ExchangeError
 
 logger = logging.getLogger(__name__)
 
@@ -79,15 +84,15 @@ class ExecutionResult:
     @classmethod
     def from_order_result(
         cls,
-        order_result: OrderResult,
+        order_result: UnifiedOrderResult,
         estimated_slippage: float | None = None,
     ) -> ExecutionResult:
         """Create execution result from order result."""
         return cls(
             success=True,
             order_id=order_result.order_id,
-            fill_price=order_result.avg_fill_price,
-            fill_size=order_result.filled_size if order_result.filled_size > 0 else order_result.size,
+            fill_price=order_result.average_price,
+            fill_size=order_result.filled_quantity if order_result.filled_quantity > 0 else order_result.quantity,
             slippage=estimated_slippage,
             error_message=None,
         )
@@ -129,14 +134,15 @@ class OrderManager:
 
     def __init__(
         self,
-        rest_client: RESTClient,
+        rest_client: ExchangeRESTProtocol,
         risk_validator: RiskValidator | None = None,
     ) -> None:
         """
         Initialize Order Manager.
 
         Args:
-            rest_client: REST client for exchange API communication.
+            rest_client: Exchange REST client implementing ExchangeRESTProtocol.
+                        Works with any exchange adapter (WEEX, Hyperliquid, etc.).
             risk_validator: Optional risk validator for pre-trade checks.
         """
         self.rest_client = rest_client
@@ -195,7 +201,7 @@ class OrderManager:
             ticker = await self.rest_client.get_ticker(symbol)
             orderbook = await self.rest_client.get_orderbook(symbol, limit=20)
 
-            current_price = float(ticker.get("last", 0))
+            current_price = ticker.last_price
             if current_price <= 0:
                 return ExecutionResult.failure("Invalid market price")
 
@@ -206,11 +212,11 @@ class OrderManager:
             estimated_slippage = self.estimate_slippage(symbol, order_size, orderbook)
 
             # Step 4: Calculate spread and book depth for order type selection
-            best_bid = float(orderbook.get("bids", [[0]])[0][0]) if orderbook.get("bids") else 0
-            best_ask = float(orderbook.get("asks", [[0]])[0][0]) if orderbook.get("asks") else 0
-            spread = (best_ask - best_bid) / current_price if current_price > 0 else 0
+            best_bid = orderbook.best_bid
+            best_ask = orderbook.best_ask
+            spread = orderbook.spread
 
-            book_depth = self._calculate_book_depth(orderbook, current_price)
+            book_depth = self._calculate_book_depth(orderbook)
 
             # Step 5: Select order type
             order_type_selection = self.select_order_type(
@@ -279,7 +285,7 @@ class OrderManager:
         self,
         symbol: str,
         size: float,
-        orderbook: dict | None = None,
+        orderbook: "UnifiedOrderbook | None" = None,
     ) -> float:
         """
         Estimate expected slippage for an order.
@@ -290,11 +296,13 @@ class OrderManager:
         Args:
             symbol: Trading symbol.
             size: Order size in base currency.
-            orderbook: Orderbook data with bids and asks.
+            orderbook: UnifiedOrderbook with bids and asks.
 
         Returns:
             Estimated slippage as decimal (0.001 = 0.1%).
         """
+        from src.exchange.models import UnifiedOrderbook
+
         # Base slippage in decimal
         base_slippage = self.BASE_SLIPPAGE_BPS / 10000
 
@@ -303,16 +311,13 @@ class OrderManager:
 
         # Calculate liquidity available at each price level
         total_liquidity = 0.0
-        asks = orderbook.get("asks", [])
-        bids = orderbook.get("bids", [])
 
-        for level in asks[:10]:  # Top 10 ask levels
-            if len(level) >= 2:
-                total_liquidity += float(level[1])
+        # UnifiedOrderbook stores bids/asks as list of (price, quantity) tuples
+        for price, qty in orderbook.asks[:10]:  # Top 10 ask levels
+            total_liquidity += qty
 
-        for level in bids[:10]:  # Top 10 bid levels
-            if len(level) >= 2:
-                total_liquidity += float(level[1])
+        for price, qty in orderbook.bids[:10]:  # Top 10 bid levels
+            total_liquidity += qty
 
         # Size impact: larger orders relative to liquidity have more slippage
         if total_liquidity > 0:
@@ -390,16 +395,16 @@ class OrderManager:
 
     async def place_order_with_protection(
         self,
-        order: OrderRequest,
+        order: UnifiedOrder,
     ) -> ExecutionResult:
         """
         Place order with built-in SL/TP protection.
 
-        Uses OrderRequest's preset_stop_loss_price and preset_take_profit_price
+        Uses UnifiedOrder's stop_loss_price and take_profit_price
         fields for atomic order placement with risk protection.
 
         Args:
-            order: OrderRequest with all order parameters.
+            order: UnifiedOrder with all order parameters.
 
         Returns:
             ExecutionResult with order details or error.
@@ -409,10 +414,10 @@ class OrderManager:
                 f"Placing {order.order_type.value} {order.side.value} order",
                 extra={
                     "symbol": order.symbol,
-                    "size": order.size,
+                    "size": order.quantity,
                     "price": order.price,
-                    "sl_price": order.preset_stop_loss_price,
-                    "tp_price": order.preset_take_profit_price,
+                    "sl_price": order.stop_loss_price,
+                    "tp_price": order.take_profit_price,
                 },
             )
 
@@ -443,13 +448,13 @@ class OrderManager:
         current_price: float,
         best_bid: float,
         best_ask: float,
-    ) -> OrderRequest:
+    ) -> UnifiedOrder:
         """
-        Build OrderRequest based on signal and market conditions.
+        Build UnifiedOrder based on signal and market conditions.
 
         Args:
             signal: Signal result with direction and SL/TP prices.
-            symbol: Trading symbol.
+            symbol: Trading symbol (unified format: BTCUSDT).
             size: Order size in base currency.
             order_type_selection: Selected order type strategy.
             current_price: Current market price.
@@ -457,7 +462,7 @@ class OrderManager:
             best_ask: Best ask price.
 
         Returns:
-            Configured OrderRequest ready for submission.
+            Configured UnifiedOrder ready for submission.
         """
         # Determine order side and position side
         if signal.signal == "LONG":
@@ -485,56 +490,48 @@ class OrderManager:
         # Generate client order ID
         client_order_id = f"as_{uuid.uuid4().hex[:16]}"
 
-        return OrderRequest(
+        return UnifiedOrder(
             symbol=symbol,
             side=side,
             order_type=order_type,
-            size=size,
+            quantity=size,
             price=price,
             position_side=position_side,
             time_in_force=time_in_force,
             client_order_id=client_order_id,
-            preset_stop_loss_price=signal.stop_loss_price,
-            preset_take_profit_price=signal.take_profit_price,
+            stop_loss_price=signal.stop_loss_price,
+            take_profit_price=signal.take_profit_price,
         )
 
     def _calculate_book_depth(
         self,
-        orderbook: dict,
-        current_price: float,
+        orderbook: "UnifiedOrderbook",
     ) -> float:
         """
         Calculate total orderbook depth in USDT.
 
         Args:
-            orderbook: Orderbook data with bids and asks.
-            current_price: Current market price for value calculation.
+            orderbook: UnifiedOrderbook with bids and asks.
 
         Returns:
             Total book depth in USDT notional value.
         """
+        from src.exchange.models import UnifiedOrderbook
+
         total_depth = 0.0
 
-        asks = orderbook.get("asks", [])
-        bids = orderbook.get("bids", [])
+        # UnifiedOrderbook stores bids/asks as list of (price, quantity) tuples
+        for price, size in orderbook.asks[:20]:
+            total_depth += price * size
 
-        for level in asks[:20]:
-            if len(level) >= 2:
-                price = float(level[0])
-                size = float(level[1])
-                total_depth += price * size
-
-        for level in bids[:20]:
-            if len(level) >= 2:
-                price = float(level[0])
-                size = float(level[1])
-                total_depth += price * size
+        for price, size in orderbook.bids[:20]:
+            total_depth += price * size
 
         return total_depth
 
     async def _execute_twap(
         self,
-        order_request: OrderRequest,
+        order_request: UnifiedOrder,
         total_size: float,
         slices: int,
     ) -> ExecutionResult:
@@ -545,7 +542,7 @@ class OrderManager:
         to minimize market impact.
 
         Args:
-            order_request: Base order request template.
+            order_request: Base UnifiedOrder template.
             total_size: Total order size to execute.
             slices: Number of slices to split order into.
 
@@ -568,22 +565,22 @@ class OrderManager:
         )
 
         for i in range(slices):
-            # Create slice order request
-            slice_order = OrderRequest(
+            # Create slice order using UnifiedOrder
+            slice_order = UnifiedOrder(
                 symbol=order_request.symbol,
                 side=order_request.side,
                 order_type=OrderType.MARKET,  # Use market for TWAP slices
-                size=slice_size,
+                quantity=slice_size,
                 price=None,
                 position_side=order_request.position_side,
                 time_in_force=TimeInForce.IOC,
                 client_order_id=f"as_twap_{uuid.uuid4().hex[:12]}_{i}",
                 # Only set SL/TP on last slice
-                preset_stop_loss_price=(
-                    order_request.preset_stop_loss_price if i == slices - 1 else None
+                stop_loss_price=(
+                    order_request.stop_loss_price if i == slices - 1 else None
                 ),
-                preset_take_profit_price=(
-                    order_request.preset_take_profit_price if i == slices - 1 else None
+                take_profit_price=(
+                    order_request.take_profit_price if i == slices - 1 else None
                 ),
             )
 
@@ -591,10 +588,10 @@ class OrderManager:
                 result = await self.rest_client.place_order(slice_order)
                 order_ids.append(result.order_id)
 
-                if result.filled_size > 0:
-                    filled_size += result.filled_size
-                    if result.avg_fill_price:
-                        total_value += result.filled_size * result.avg_fill_price
+                if result.filled_quantity > 0:
+                    filled_size += result.filled_quantity
+                    if result.average_price:
+                        total_value += result.filled_quantity * result.average_price
                 else:
                     # Assume full fill if no fill info
                     filled_size += slice_size
@@ -603,7 +600,7 @@ class OrderManager:
                     f"TWAP slice {i + 1}/{slices} completed",
                     extra={
                         "order_id": result.order_id,
-                        "filled_size": result.filled_size,
+                        "filled_quantity": result.filled_quantity,
                     },
                 )
 
@@ -638,61 +635,32 @@ class OrderManager:
         order_id: str,
         timeout_seconds: float = 5.0,
         poll_interval: float = 0.5,
-    ) -> OrderResult:
+    ) -> UnifiedOrderResult:
         """
         Wait for order fill with timeout.
 
         Polls order status until filled or timeout reached.
 
         Args:
-            symbol: Trading symbol.
+            symbol: Trading symbol (unified format: BTCUSDT).
             order_id: Order ID to track.
             timeout_seconds: Maximum time to wait for fill.
             poll_interval: Time between status checks.
 
         Returns:
-            Updated OrderResult with fill information.
+            Updated UnifiedOrderResult with fill information.
         """
+        from src.exchange.models import OrderStatus
+
         elapsed = 0.0
 
         while elapsed < timeout_seconds:
             try:
-                order_info = await self.rest_client.get_order(symbol, order_id)
+                order_result = await self.rest_client.get_order(symbol, order_id)
 
-                status = order_info.get("state", "").lower()
-                filled_size = float(order_info.get("filledQty", 0))
-                avg_price = float(order_info.get("priceAvg", 0)) if order_info.get("priceAvg") else None
-
-                if status in ("filled", "full_fill"):
-                    return OrderResult(
-                        order_id=order_id,
-                        client_order_id=order_info.get("clientOid"),
-                        symbol=symbol,
-                        side=OrderSide(order_info.get("side", "buy")),
-                        order_type=OrderType(order_info.get("orderType", "market")),
-                        size=float(order_info.get("size", 0)),
-                        price=float(order_info.get("price", 0)) if order_info.get("price") else None,
-                        status=status,
-                        filled_size=filled_size,
-                        avg_fill_price=avg_price,
-                        raw_response=order_info,
-                    )
-
-                if status in ("canceled", "cancelled", "rejected"):
-                    # Order was cancelled or rejected
-                    return OrderResult(
-                        order_id=order_id,
-                        client_order_id=order_info.get("clientOid"),
-                        symbol=symbol,
-                        side=OrderSide(order_info.get("side", "buy")),
-                        order_type=OrderType(order_info.get("orderType", "market")),
-                        size=float(order_info.get("size", 0)),
-                        price=float(order_info.get("price", 0)) if order_info.get("price") else None,
-                        status=status,
-                        filled_size=filled_size,
-                        avg_fill_price=avg_price,
-                        raw_response=order_info,
-                    )
+                # Check if order is in a terminal state
+                if order_result.is_filled or order_result.is_closed:
+                    return order_result
 
             except RESTClientError as e:
                 logger.warning(f"Failed to get order status: {e}")
@@ -700,21 +668,24 @@ class OrderManager:
             await asyncio.sleep(poll_interval)
             elapsed += poll_interval
 
-        # Timeout - return partial result
+        # Timeout - return the last result or a timeout placeholder
         logger.warning(f"Order {order_id} fill timeout after {timeout_seconds}s")
-        return OrderResult(
-            order_id=order_id,
-            client_order_id=None,
-            symbol=symbol,
-            side=OrderSide.BUY,  # Placeholder
-            order_type=OrderType.LIMIT,
-            size=0,
-            price=None,
-            status="timeout",
-            filled_size=0,
-            avg_fill_price=None,
-            raw_response={},
-        )
+
+        # Try one final get to return current state
+        try:
+            return await self.rest_client.get_order(symbol, order_id)
+        except RESTClientError:
+            # Return a minimal result indicating timeout
+            return UnifiedOrderResult(
+                order_id=order_id,
+                client_order_id=None,
+                symbol=symbol,
+                side=OrderSide.BUY,  # Placeholder
+                order_type=OrderType.LIMIT,
+                quantity=0,
+                price=None,
+                status=OrderStatus.PENDING,
+            )
 
 
 @dataclass

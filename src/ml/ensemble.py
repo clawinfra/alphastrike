@@ -4,11 +4,18 @@ AlphaStrike Trading Bot - ML Ensemble Orchestrator (US-014)
 Combines predictions from XGBoost, LightGBM, LSTM, and Random Forest models
 using weighted averaging for robust trading signal generation.
 
-Weights:
+Base Weights:
 - XGBoost: 30%
 - LightGBM: 25%
 - LSTM: 25%
 - Random Forest: 20%
+
+Dynamic Weight Adjustment:
+- Accuracy > 55%: Full weight
+- Accuracy 50-55%: 75% weight
+- Accuracy 45-50%: 50% weight
+- Accuracy < 45% (persistent): Excluded (0% weight)
+- Regime-specific boosts for models performing well in current regime
 
 Signal Generation:
 - LONG: weighted_avg > 0.75
@@ -16,22 +23,31 @@ Signal Generation:
 - HOLD: otherwise
 
 Requires minimum 2 healthy models for signal generation.
+Diversity protection ensures we never exclude all but 1 model.
 """
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
 from src.ml.lightgbm_model import LightGBMConfig, LightGBMModel
 from src.ml.lstm_model import LSTMConfig, LSTMModel
+from src.ml.quality_tracker import (
+    ModelQualityTracker,
+    QualityTrackerConfig,
+    SignalType,
+)
 from src.ml.random_forest_model import RandomForestConfig, RandomForestModel
 from src.ml.xgboost_model import XGBoostConfig, XGBoostModel
 
 logger = logging.getLogger(__name__)
+
+# Type alias for regime
+RegimeType = Literal["trending", "ranging", "volatile", "unknown"]
 
 
 # Default model weights
@@ -74,6 +90,7 @@ class MLEnsemble:
         models_dir: Path | None = None,
         weights: dict[str, float] | None = None,
         lstm_input_size: int = 20,
+        quality_config: QualityTrackerConfig | None = None,
     ) -> None:
         """
         Initialize the ML Ensemble.
@@ -83,6 +100,7 @@ class MLEnsemble:
                         Expected files: xgboost.joblib, lightgbm.txt, lstm.pt, random_forest.joblib
             weights: Custom model weights (must sum to 1.0). Uses defaults if None.
             lstm_input_size: Number of input features for LSTM model.
+            quality_config: Configuration for model quality tracking. Uses defaults if None.
         """
         self.models_dir = models_dir or Path("models")
         self.weights = weights or DEFAULT_WEIGHTS.copy()
@@ -106,6 +124,11 @@ class MLEnsemble:
             "lstm": False,
             "random_forest": False,
         }
+
+        # Quality tracker for dynamic weight adjustment based on accuracy
+        self._quality_tracker = ModelQualityTracker(
+            config=quality_config or QualityTrackerConfig()
+        )
 
         logger.info(
             "MLEnsemble initialized",
@@ -334,7 +357,11 @@ class MLEnsemble:
 
         return new_weights
 
-    def predict(self, features: dict[str, Any]) -> tuple[str, float, dict[str, float], float]:
+    def predict(
+        self,
+        features: dict[str, Any],
+        current_regime: RegimeType = "unknown",
+    ) -> tuple[str, float, dict[str, float], float]:
         """
         Generate ensemble prediction from all healthy models.
 
@@ -342,6 +369,8 @@ class MLEnsemble:
             features: Dictionary of feature values. Expected to contain:
                 - "array": numpy array of shape (n_features,) or (n_samples, n_features)
                 - Or individual feature keys that will be converted to array
+            current_regime: Current market regime for quality-adjusted weighting.
+                           One of "trending", "ranging", "volatile", or "unknown".
 
         Returns:
             Tuple of:
@@ -366,16 +395,22 @@ class MLEnsemble:
             )
             return ("HOLD", 0.0, {}, 0.5)
 
-        # Get redistributed weights
-        effective_weights = self._redistribute_weights(unhealthy_models)
+        # Get base redistributed weights (for unhealthy models)
+        base_weights = self._redistribute_weights(unhealthy_models)
+
+        # Apply quality-adjusted weights based on accuracy tracking
+        effective_weights = self._quality_tracker.get_adjusted_weights(
+            base_weights=base_weights,
+            current_regime=current_regime,
+            health_status=self._model_health,
+        )
 
         # Extract feature array
         feature_array = self._extract_feature_array(features)
 
         # Get predictions from each healthy model
         model_outputs: dict[str, float] = {}
-        weighted_sum = 0.0
-        total_weight = 0.0
+        model_confidences: dict[str, float] = {}
 
         # XGBoost prediction
         if self._model_health["xgboost"] and self._xgboost is not None:
@@ -383,8 +418,8 @@ class MLEnsemble:
                 pred = self._xgboost.predict(feature_array)
                 pred_value = float(np.mean(pred))
                 model_outputs["xgboost"] = pred_value
-                weighted_sum += pred_value * effective_weights["xgboost"]
-                total_weight += effective_weights["xgboost"]
+                # Estimate confidence from prediction extremity
+                model_confidences["xgboost"] = abs(pred_value - 0.5) * 2
             except Exception as e:
                 logger.error(f"XGBoost prediction failed: {e}")
                 self._model_health["xgboost"] = False
@@ -395,8 +430,7 @@ class MLEnsemble:
                 pred = self._lightgbm.predict(feature_array)
                 pred_value = float(np.mean(pred))
                 model_outputs["lightgbm"] = pred_value
-                weighted_sum += pred_value * effective_weights["lightgbm"]
-                total_weight += effective_weights["lightgbm"]
+                model_confidences["lightgbm"] = abs(pred_value - 0.5) * 2
             except Exception as e:
                 logger.error(f"LightGBM prediction failed: {e}")
                 self._model_health["lightgbm"] = False
@@ -407,8 +441,7 @@ class MLEnsemble:
                 pred = self._lstm.predict(feature_array)
                 pred_value = float(np.mean(pred))
                 model_outputs["lstm"] = pred_value
-                weighted_sum += pred_value * effective_weights["lstm"]
-                total_weight += effective_weights["lstm"]
+                model_confidences["lstm"] = abs(pred_value - 0.5) * 2
             except Exception as e:
                 logger.error(f"LSTM prediction failed: {e}")
                 self._model_health["lstm"] = False
@@ -419,8 +452,7 @@ class MLEnsemble:
                 pred = self._random_forest.predict(feature_array)
                 pred_value = float(np.mean(pred))
                 model_outputs["random_forest"] = pred_value
-                weighted_sum += pred_value * effective_weights["random_forest"]
-                total_weight += effective_weights["random_forest"]
+                model_confidences["random_forest"] = abs(pred_value - 0.5) * 2
             except Exception as e:
                 logger.error(f"Random Forest prediction failed: {e}")
                 self._model_health["random_forest"] = False
@@ -432,7 +464,26 @@ class MLEnsemble:
             )
             return ("HOLD", 0.0, model_outputs, 0.5)
 
-        # Calculate weighted average
+        # Record predictions with quality tracker for accuracy tracking
+        for model_name, pred_value in model_outputs.items():
+            # Convert prediction to signal for tracking
+            pred_signal = self._determine_signal(pred_value)
+            confidence = model_confidences.get(model_name, 0.5)
+            self._quality_tracker.record_prediction(
+                model_name=model_name,
+                predicted_signal=pred_signal,
+                regime=current_regime,
+                confidence=confidence,
+            )
+
+        # Calculate weighted average using quality-adjusted weights
+        weighted_sum = 0.0
+        total_weight = 0.0
+        for model_name, pred_value in model_outputs.items():
+            weight = effective_weights.get(model_name, 0.0)
+            weighted_sum += pred_value * weight
+            total_weight += weight
+
         if total_weight > 0:
             weighted_avg = weighted_sum / total_weight
         else:
@@ -446,10 +497,11 @@ class MLEnsemble:
 
         logger.info(
             f"Ensemble prediction: signal={signal}, confidence={confidence:.2%}, "
-            f"weighted_avg={weighted_avg:.4f}",
+            f"weighted_avg={weighted_avg:.4f}, regime={current_regime}",
             extra={
                 "model_outputs": model_outputs,
                 "effective_weights": effective_weights,
+                "quality_stats": self._quality_tracker.get_all_stats(),
             },
         )
 
@@ -479,7 +531,7 @@ class MLEnsemble:
         arr = np.array(values, dtype=np.float64).reshape(1, -1)
         return arr
 
-    def _determine_signal(self, weighted_avg: float) -> str:
+    def _determine_signal(self, weighted_avg: float) -> SignalType:
         """
         Determine trading signal from weighted average.
 
@@ -550,3 +602,62 @@ class MLEnsemble:
                 "short": SHORT_THRESHOLD,
             },
         }
+
+    def record_outcome(self, actual_signal: str) -> None:
+        """
+        Record actual market outcome for all models that made predictions.
+
+        Should be called after the market confirms the signal direction.
+        This updates accuracy statistics used for dynamic weight adjustment.
+
+        Args:
+            actual_signal: The actual market outcome - "LONG" (price went up),
+                          "SHORT" (price went down), or "HOLD" (sideways)
+
+        Example:
+            # After prediction
+            signal, conf, outputs, avg = ensemble.predict(features, regime="trending")
+            # ... time passes, market moves ...
+            # After outcome is known
+            ensemble.record_outcome("LONG")  # Price actually went up
+        """
+        # Use batch method to record outcome for all models at once
+        self._quality_tracker.record_batch_outcomes(actual_signal)  # type: ignore[arg-type]
+        logger.debug(f"Recorded outcome for all models: {actual_signal}")
+
+    def get_quality_stats(self) -> dict[str, Any]:
+        """
+        Get quality statistics for all models.
+
+        Returns:
+            Dictionary with per-model accuracy stats including:
+            - overall_accuracy: Rolling accuracy across all regimes
+            - regime_accuracy: Per-regime accuracy breakdown
+            - status: Current model status (ACTIVE, DEGRADED, EXCLUDED)
+            - weight_multiplier: Current weight adjustment factor
+        """
+        return self._quality_tracker.get_all_stats()
+
+    def check_model_recovery(self, model_name: str) -> bool:
+        """
+        Check if an excluded/degraded model has recovered.
+
+        Args:
+            model_name: Name of the model to check
+
+        Returns:
+            True if the model has recovered and been restored to active status
+        """
+        return self._quality_tracker.check_recovery(model_name)
+
+    def reset_quality_stats(self) -> None:
+        """
+        Reset all quality tracking statistics.
+
+        Use with caution - typically after significant model retraining
+        or when starting a new trading session with fresh models.
+        """
+        self._quality_tracker = ModelQualityTracker(
+            config=self._quality_tracker.config
+        )
+        logger.info("Quality tracking statistics reset")
