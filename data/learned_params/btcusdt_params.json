@@ -1,15 +1,27 @@
 {
   "config": {
-    "conviction_threshold": 74.87566853061946,
-    "stop_atr_multiplier": 2.123422152178822,
-    "take_profit_atr_multiplier": 3.5602040635334324,
-    "position_size_multiplier": 0.9560523352119356,
-    "short_conviction_penalty": 2,
+    "conviction_threshold": 80,
+    "stop_atr_multiplier": 2.0,
+    "take_profit_atr_multiplier": 4.0,
+    "position_size_multiplier": 1.5,
+    "short_conviction_penalty": 5,
     "short_enabled": true,
     "require_daily_trend_for_short": true
   },
   "symbol": "BTCUSDT",
-  "optimized_at": "2026-02-01T12:20:04.630627+00:00",
-  "sharpe": 0.011567101413816299,
-  "oos_sharpe": 2.5980762113533156
+  "optimized_at": "2026-02-01T21:03:17.134668+00:00",
+  "strategy": "Trade Big, Trade Less, Trade with Confidence",
+  "backtest_30d": {
+    "pnl_usd": -106.44,
+    "pnl_pct": -1.06,
+    "trades": 1,
+    "win_rate": 0.0
+  },
+  "portfolio_result": {
+    "total_pnl": 232.14,
+    "return_pct": 0.77,
+    "annualized_pct": 9.8,
+    "total_trades": 5,
+    "overall_win_rate": 0.6
+  }
 }

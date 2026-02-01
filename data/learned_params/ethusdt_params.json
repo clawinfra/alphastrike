@@ -1,15 +1,27 @@
 {
   "config": {
-    "conviction_threshold": 76.24217733388136,
-    "stop_atr_multiplier": 1.541168988591605,
-    "take_profit_atr_multiplier": 4.909729556485983,
-    "position_size_multiplier": 1.298931168960506,
-    "short_conviction_penalty": 3,
+    "conviction_threshold": 82,
+    "stop_atr_multiplier": 1.5,
+    "take_profit_atr_multiplier": 5.0,
+    "position_size_multiplier": 1.8,
+    "short_conviction_penalty": 0,
     "short_enabled": false,
     "require_daily_trend_for_short": false
   },
   "symbol": "ETHUSDT",
-  "optimized_at": "2026-02-01T12:25:33.926854+00:00",
-  "sharpe": -0.12640579451319192,
-  "oos_sharpe": 3.6698325165764016
+  "optimized_at": "2026-02-01T21:03:17.134668+00:00",
+  "strategy": "Trade Big, Trade Less, Trade with Confidence",
+  "backtest_30d": {
+    "pnl_usd": 0.0,
+    "pnl_pct": 0.0,
+    "trades": 0,
+    "win_rate": 0.0
+  },
+  "portfolio_result": {
+    "total_pnl": 232.14,
+    "return_pct": 0.77,
+    "annualized_pct": 9.8,
+    "total_trades": 5,
+    "overall_win_rate": 0.6
+  }
 }
