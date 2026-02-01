@@ -482,22 +482,63 @@ class FeaturePipeline:
     - Time features (5 features)
     - Volatility features (4 features)
 
+    The Simons Protocol uses a reduced feature set (25 features) for
+    signal generation, accessible via `get_core_features()`.
+
     Usage:
         pipeline = FeaturePipeline()
 
-        # Calculate features from candle data
-        features = pipeline.calculate_features(
-            candles=candle_list,
-            ticker_data=ticker,
-            orderbook_data=orderbook,
-        )
+        # Calculate all features (59)
+        features = pipeline.calculate_features(candles=candle_list)
 
-        # Get feature names
-        names = pipeline.feature_names
+        # Get core features only (25) for ML signal generation
+        core_features = pipeline.get_core_features(candles=candle_list)
 
-        # Get feature count
-        count = pipeline.feature_count
+        # Get timing features for entry optimization
+        timing_features = pipeline.get_timing_features(candles=candle_list)
     """
+
+    # Tier 1+2 Core Features (25) for signal generation
+    # These have the highest predictive power and should be used for ML models
+    CORE_FEATURE_NAMES = [
+        # Tier 1 - Signal Drivers
+        "rsi",  # RSI momentum
+        "rsi_slope",  # RSI direction
+        "adx",  # Trend strength
+        "plus_di",  # Positive directional indicator
+        "minus_di",  # Negative directional indicator
+        "ema_short_ratio",  # Price vs short EMA
+        "ema_long_ratio",  # Price vs long EMA
+        "obv_slope",  # On-balance volume trend
+        "volume_ratio",  # Volume confirmation
+        # Tier 2 - Confirmation Features
+        "bb_position",  # Bollinger Band position
+        "bb_bandwidth",  # Volatility via BB width
+        "macd_histogram",  # MACD signal direction
+        "atr",  # Average True Range
+        "atr_ratio",  # ATR relative to price
+        "atr_relative",  # Current vs historical ATR
+        "vol_regime",  # Volatility regime (0/1/2)
+        "funding_rate",  # Funding rate sentiment
+        "orderbook_imbalance",  # Order flow imbalance
+        "trade_flow_imbalance",  # Trade direction flow
+        "btc_correlation",  # Market correlation
+        # Trend confirmation
+        "ema_cross",  # EMA crossover signal
+        "trend_strength",  # Combined trend metric
+        "momentum",  # Price momentum
+        "price_position",  # Price in range (0-1)
+        "stoch_k",  # Stochastic oscillator
+    ]
+
+    # Tier 3 - Timing Features for entry optimization (used separately)
+    TIMING_FEATURE_NAMES = [
+        "session_indicator",  # Trading session (Asia/EU/US)
+        "hour_sin",  # Hour cyclical encoding
+        "hour_cos",  # Hour cyclical encoding
+        "vol_percentile",  # Volatility percentile
+        "realized_vol",  # Realized volatility
+    ]
 
     def __init__(
         self,
@@ -931,6 +972,156 @@ class FeaturePipeline:
             "vol_regime": 1.0,
             "vol_percentile": 0.5,
         }
+
+    def get_core_features(
+        self,
+        candles: list[Candle],
+        ticker_data: TickerData | None = None,
+        orderbook_data: OrderbookData | None = None,
+        cross_asset_data: CrossAssetData | None = None,
+        microstructure_data: MicrostructureData | None = None,
+        use_cache: bool = True,
+    ) -> dict[str, float]:
+        """
+        Get only the 25 core features for ML signal generation.
+
+        This is the reduced feature set for the Simons Protocol,
+        containing only Tier 1 (signal drivers) and Tier 2 (confirmation) features.
+
+        Args:
+            candles: List of OHLCV candles
+            ticker_data: Current ticker data
+            orderbook_data: Current orderbook snapshot
+            cross_asset_data: Cross-asset price data
+            microstructure_data: Pre-built microstructure data
+            use_cache: Whether to use cached results
+
+        Returns:
+            Dictionary of 25 core feature values
+        """
+        # Calculate all features first
+        all_features = self.calculate_features(
+            candles=candles,
+            ticker_data=ticker_data,
+            orderbook_data=orderbook_data,
+            cross_asset_data=cross_asset_data,
+            microstructure_data=microstructure_data,
+            use_cache=use_cache,
+        )
+
+        # Extract only core features
+        core_features: dict[str, float] = {}
+        for name in self.CORE_FEATURE_NAMES:
+            if name in all_features:
+                core_features[name] = all_features[name]
+            else:
+                # Calculate derived features if not present
+                core_features[name] = self._calculate_derived_feature(name, all_features)
+
+        return core_features
+
+    def get_timing_features(
+        self,
+        candles: list[Candle],
+        timestamp: datetime | None = None,
+        use_cache: bool = True,
+    ) -> dict[str, float]:
+        """
+        Get timing features for entry optimization.
+
+        These are Tier 3 features used for fine-tuning entry points,
+        not for signal generation.
+
+        Args:
+            candles: List of OHLCV candles
+            timestamp: Timestamp for time features
+            use_cache: Whether to use cached results
+
+        Returns:
+            Dictionary of timing feature values
+        """
+        all_features = self.calculate_features(
+            candles=candles,
+            timestamp=timestamp,
+            use_cache=use_cache,
+        )
+
+        timing_features: dict[str, float] = {}
+        for name in self.TIMING_FEATURE_NAMES:
+            timing_features[name] = all_features.get(name, 0.0)
+
+        return timing_features
+
+    def _calculate_derived_feature(
+        self,
+        name: str,
+        features: dict[str, float],
+    ) -> float:
+        """
+        Calculate derived features not directly available.
+
+        Some core features are combinations or transformations
+        of raw technical indicators.
+        """
+        if name == "ema_short_ratio":
+            # Price relative to short EMA (e.g., EMA9)
+            ema = features.get("ema_9", 0.0)
+            close = features.get("close", ema)
+            if ema > 0:
+                return (close - ema) / ema
+            return 0.0
+
+        if name == "ema_long_ratio":
+            # Price relative to long EMA (e.g., EMA50)
+            ema = features.get("ema_50", 0.0)
+            close = features.get("close", ema)
+            if ema > 0:
+                return (close - ema) / ema
+            return 0.0
+
+        if name == "ema_cross":
+            # EMA crossover signal: +1 if short > long, -1 if short < long
+            ema_short = features.get("ema_21", 0.0)
+            ema_long = features.get("ema_50", 0.0)
+            if ema_long > 0:
+                return 1.0 if ema_short > ema_long else -1.0
+            return 0.0
+
+        if name == "trend_strength":
+            # Combined trend metric from ADX and DI difference
+            adx = features.get("adx", 0.0)
+            plus_di = features.get("plus_di", 0.0)
+            minus_di = features.get("minus_di", 0.0)
+            di_diff = plus_di - minus_di
+            # Normalize: ADX gives strength (0-100), DI diff gives direction
+            return (adx / 100.0) * (1.0 if di_diff > 0 else -1.0)
+
+        if name == "momentum":
+            # Simple price momentum (rate of change)
+            roc = features.get("roc", 0.0)
+            return float(np.clip(roc / 10.0, -1.0, 1.0))  # Normalize ROC
+
+        if name == "price_position":
+            # Price position in recent range (0 = low, 1 = high)
+            bb_upper = features.get("bb_upper", 0.0)
+            bb_lower = features.get("bb_lower", 0.0)
+            close = features.get("close", 0.0)
+            if bb_upper > bb_lower:
+                return (close - bb_lower) / (bb_upper - bb_lower)
+            return 0.5
+
+        # Default: return 0 for unknown features
+        return 0.0
+
+    @property
+    def core_feature_names(self) -> list[str]:
+        """Get list of core feature names (25 features)."""
+        return self.CORE_FEATURE_NAMES.copy()
+
+    @property
+    def core_feature_count(self) -> int:
+        """Get count of core features."""
+        return len(self.CORE_FEATURE_NAMES)
 
     def clear_cache(self) -> None:
         """Clear the feature cache."""
