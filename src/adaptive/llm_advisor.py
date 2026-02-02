@@ -5,12 +5,14 @@ Uses local LLM with tool calling to make complex trading decisions
 based on performance metrics and market conditions.
 """
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Optional, Callable, Awaitable
 import json
 import logging
 import os
+import re
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Awaitable, Callable, Optional
+
 import httpx
 
 from src.adaptive.asset_config import AdaptiveAssetConfig, save_asset_config
@@ -178,6 +180,24 @@ TOOLS = [
                 }
             },
             "required": ["message", "severity"]
+        }
+    },
+    {
+        "name": "adjust_leverage",
+        "description": "Adjust portfolio leverage based on market conditions. Reduce in high volatility or drawdown, increase in low volatility trending markets.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "new_leverage": {
+                    "type": "number",
+                    "description": "New leverage multiplier (1.0-10.0). Current default is 5.0."
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Reason for leverage adjustment (e.g., 'high volatility', 'drawdown protection', 'favorable trend')"
+                }
+            },
+            "required": ["new_leverage", "reason"]
         }
     },
     {
@@ -381,7 +401,6 @@ Respond with ONE JSON object per asset that needs action. If asset is fine, use 
         # First try our simple JSON format: {"action": "...", "symbol": "...", ...}
         try:
             # Find all JSON objects in response (handle nested braces in params)
-            import re
             json_pattern = r'\{[^{}]*"action"\s*:\s*"[^"]+"\s*,[^{}]*(?:\{[^{}]*\})?[^{}]*\}'
             matches = re.findall(json_pattern, response, re.DOTALL)
 
@@ -450,7 +469,6 @@ Respond with ONE JSON object per asset that needs action. If asset is fine, use 
         decisions = []
 
         # Look for JSON-like patterns
-        import re
         pattern = r'\{[^{}]*"name"\s*:\s*"([^"]+)"[^{}]*\}'
         matches = re.findall(pattern, text)
 

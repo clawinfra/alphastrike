@@ -38,6 +38,10 @@ from src.adaptive.hot_reload import (
     TradingState,
     ReloadResult,
 )
+from src.adaptive.dynamic_leverage import (
+    DynamicLeverageManager,
+    LeverageState,
+)
 from src.adaptive.regime_params import (
     RegimeAwareParams,
     RegimeAdjustment,
@@ -109,4 +113,7 @@ __all__ = [
     "HotReloadManager",
     "TradingState",
     "ReloadResult",
+    # Dynamic Leverage
+    "DynamicLeverageManager",
+    "LeverageState",
 ]

@@ -32,6 +32,13 @@ class TradingState:
     # Model versions
     model_versions: dict[str, str] = field(default_factory=dict)
 
+    # Dynamic leverage (NEW)
+    current_leverage: float = 5.0
+    leverage_reason: str = ""
+
+    # Per-asset parameters (LLM-adjusted)
+    asset_params: dict[str, dict] = field(default_factory=dict)
+
     # Timestamp
     saved_at: Optional[str] = None
 
@@ -42,6 +49,9 @@ class TradingState:
             "current_equity": self.current_equity,
             "peak_equity": self.peak_equity,
             "model_versions": self.model_versions,
+            "current_leverage": self.current_leverage,
+            "leverage_reason": self.leverage_reason,
+            "asset_params": self.asset_params,
             "saved_at": self.saved_at,
         }
 
@@ -53,6 +63,9 @@ class TradingState:
             current_equity=data.get("current_equity", 0.0),
             peak_equity=data.get("peak_equity", 0.0),
             model_versions=data.get("model_versions", {}),
+            current_leverage=data.get("current_leverage", 5.0),
+            leverage_reason=data.get("leverage_reason", ""),
+            asset_params=data.get("asset_params", {}),
             saved_at=data.get("saved_at"),
         )
 
