@@ -38,7 +38,14 @@ dependencies = [
 
     # Technical Analysis
     "ta>=0.11.0",
+
+    # CLI
+    "click>=8.1.0",
+    "rich>=13.0.0",  # Pretty terminal output
 ]
+
+[project.scripts]
+alphastrike = "src.cli.main:main"
 
 [project.optional-dependencies]
 dev = [
@@ -69,8 +76,15 @@ venv = ".venv"
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+
+[tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
-ignore = ["E501"]
+ignore = [
+    "E501",   # Line too long (handled by formatter)
+    "N802",   # Function name should be lowercase (config constants: MAX_LEVERAGE)
+    "N803",   # Argument name should be lowercase (ML convention: X, X_train)
+    "N806",   # Variable in function should be lowercase (ML convention: X, X_train)
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
