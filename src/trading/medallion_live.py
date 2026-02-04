@@ -31,6 +31,14 @@ from src.trading.position_tracker import (
 )
 from src.trading.trade_logger import create_trade_logger
 
+# Cloud backup imports (only used in live mode)
+try:
+    from src.resilience.cloud_backup import CloudBackupManager
+    CLOUD_BACKUP_AVAILABLE = True
+except ImportError:
+    CloudBackupManager = None  # type: ignore
+    CLOUD_BACKUP_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -77,6 +85,12 @@ class MedallionLiveConfig:
     position_sync_seconds: int = 60
     exit_check_seconds: int = 30
 
+    # Paper trading (dry_run mode)
+    fallback_balance: float = 10000.0  # Simulated balance for dry_run
+
+    # Cloud backup (live mode only, configured via .env)
+    cloud_backup_enabled: bool = True  # Auto-disabled in dry_run mode
+
 
 class MedallionLiveEngine:
     """
@@ -97,10 +111,12 @@ class MedallionLiveEngine:
         testnet: bool = True,
         dry_run: bool = False,
         db_backend: Literal["jsonl", "sqlite"] = "jsonl",
+        private_key: str | None = None,
     ):
         self.config = config or MedallionLiveConfig()
         self.testnet = testnet
         self.dry_run = dry_run
+        self.private_key = private_key  # Wallet-specific key for multi-wallet
 
         # Components (lazy init)
         self.adapter = None
@@ -124,6 +140,15 @@ class MedallionLiveEngine:
             min_leverage=self.config.min_leverage,
             max_leverage=self.config.max_leverage,
         )
+
+        # Cloud backup (live mode only)
+        self.cloud_backup = None  # type: CloudBackupManager | None
+        config = self.config  # Ensure config is available
+        if not dry_run and config.cloud_backup_enabled and CLOUD_BACKUP_AVAILABLE:
+            self.cloud_backup = CloudBackupManager()
+            logger.info("Cloud backup enabled (live mode)")
+        elif not dry_run and config.cloud_backup_enabled and not CLOUD_BACKUP_AVAILABLE:
+            logger.warning("Cloud backup requested but CloudBackupManager not available")
 
         # State
         self.candle_buffers: dict[str, list] = {}
@@ -150,24 +175,38 @@ class MedallionLiveEngine:
         from src.features.pipeline import FeaturePipeline
         from src.ml.lightgbm_model import LightGBMModel
 
-        # Initialize exchange adapter
-        self.adapter = HyperliquidAdapter(testnet=self.testnet)
+        # Initialize exchange adapter (use wallet-specific key if provided)
+        self.adapter = HyperliquidAdapter(
+            testnet=self.testnet,
+            private_key=self.private_key,
+        )
         await self.adapter.initialize()
         logger.info(f"Hyperliquid adapter initialized (testnet={self.testnet})")
 
-        # Get initial balance
+        # Get balance based on mode
         if self.dry_run:
-            # Use simulated balance for dry-run mode (no wallet required)
-            self.balance = 10000.0
+            # Paper trading: use fallback balance (configurable)
+            self.balance = getattr(self.config, 'fallback_balance', 10000.0)
             logger.info(f"DRY RUN: Using simulated balance ${self.balance:,.2f}")
         else:
+            # Live trading: must use real balance from API
             try:
                 balance_info = await self.adapter.rest.get_account_balance()
                 self.balance = balance_info.total_balance
-                logger.info(f"Account balance: ${self.balance:,.2f}")
+                logger.info(f"API balance: ${self.balance:,.2f}")
+
+                # Validate balance is tradable
+                min_balance = 100.0  # Minimum required to trade
+                if self.balance < min_balance:
+                    raise ValueError(
+                        f"Insufficient balance: ${self.balance:,.2f}. "
+                        f"Minimum required: ${min_balance:,.2f}. "
+                        f"Fund your wallet or use --dry-run for paper trading."
+                    )
+
             except Exception as e:
                 logger.error(f"Failed to get account balance: {e}")
-                logger.error("Ensure EXCHANGE_WALLET_PRIVATE_KEY is set for live trading")
+                logger.error("Ensure EXCHANGE_WALLET_PRIVATE_KEY is set correctly")
                 raise
 
         # Initialize feature pipeline
@@ -192,6 +231,12 @@ class MedallionLiveEngine:
 
         # Initialize candle buffers
         await self._initialize_candle_buffers()
+
+        # Start cloud backup worker (live mode only)
+        if self.cloud_backup:
+            await self.cloud_backup.start_retry_worker()
+            health = await self.cloud_backup.health_check()
+            logger.info(f"Cloud backup health: {health}")
 
         logger.info("Medallion Live Engine initialized successfully")
 
@@ -261,6 +306,11 @@ class MedallionLiveEngine:
         # Close adapter
         if self.adapter:
             await self.adapter.close()
+
+        # Close cloud backup
+        if self.cloud_backup:
+            await self.cloud_backup.close()
+            logger.info("Cloud backup closed")
 
         # Print final report
         report = self.trade_logger.generate_daily_report()
@@ -657,6 +707,24 @@ class MedallionLiveEngine:
                 )
                 self.position_tracker.add_position(position)
                 await self.trade_logger.log_entry(position)
+
+                # Cloud backup (live mode only)
+                await self._backup_trade_event(
+                    event_type="trade_entry",
+                    symbol=symbol,
+                    payload={
+                        "direction": direction,
+                        "entry_price": position.entry_price,
+                        "size": size,
+                        "leverage": current_leverage,
+                        "conviction": conviction,
+                        "strategy": tier,
+                        "regime": regime,
+                        "order_id": result.order_id,
+                    },
+                )
+                await self._backup_position_state()
+
                 return True
 
             logger.error(f"Order placement failed for {symbol}")
@@ -711,6 +779,26 @@ class MedallionLiveEngine:
                 trade = self.position_tracker.close_position(symbol, exit_price, reason)
                 if trade:
                     await self.trade_logger.log_exit(trade)
+
+                    # Cloud backup (live mode only)
+                    await self._backup_trade_event(
+                        event_type="trade_exit",
+                        symbol=symbol,
+                        payload={
+                            "direction": position.direction,
+                            "entry_price": position.entry_price,
+                            "exit_price": exit_price,
+                            "size": position.size,
+                            "leverage": position.leverage,
+                            "pnl": trade.pnl,
+                            "pnl_pct": trade.pnl_pct,
+                            "exit_reason": reason,
+                            "strategy": position.strategy,
+                            "order_id": position.order_id,
+                        },
+                    )
+                    await self._backup_position_state()
+
                 return True
 
             return False
@@ -755,6 +843,10 @@ class MedallionLiveEngine:
                 f"balance=${self.balance:,.2f}, unrealized=${summary['total_unrealized_pnl']:+.2f}"
             )
 
+            # Periodic position state backup (live mode only)
+            if not self.dry_run:
+                await self._backup_position_state()
+
         except Exception as e:
             logger.error(f"Position sync failed: {e}")
 
@@ -763,3 +855,76 @@ class MedallionLiveEngine:
         exits = self.position_tracker.get_positions_to_exit()
         for symbol, reason in exits:
             await self._execute_exit(symbol, reason)
+
+    async def _backup_trade_event(
+        self,
+        event_type: str,
+        symbol: str,
+        payload: dict,
+    ) -> None:
+        """
+        Backup trade event to cloud (live mode only).
+
+        Events are backed up asynchronously and don't block trading.
+        """
+        if not self.cloud_backup:
+            return
+
+        import hashlib
+        import os
+        import uuid
+
+        try:
+            timestamp = datetime.now(UTC).isoformat()
+            event_id = str(uuid.uuid4())
+
+            # Create event hash for integrity verification
+            event_data = f"{event_type}:{symbol}:{timestamp}:{str(payload)}"
+            event_hash = hashlib.sha256(event_data.encode()).hexdigest()[:16]
+
+            event = {
+                "event_id": event_id,
+                "event_type": event_type,
+                "timestamp": timestamp,
+                "symbol": symbol,
+                "payload": payload,
+                "sequence_number": int(datetime.now(UTC).timestamp() * 1000),
+                "event_hash": event_hash,
+                "instance_id": os.getenv("INSTANCE_ID", "default"),
+            }
+
+            # Non-blocking backup to all tiers
+            await self.cloud_backup.backup_event(event)
+            logger.debug(f"Backed up {event_type} event for {symbol}")
+
+        except Exception as e:
+            # Never let backup failures affect trading
+            logger.warning(f"Cloud backup failed (non-critical): {e}")
+
+    async def _backup_position_state(self) -> None:
+        """Backup current position state to hot tier (live mode only)."""
+        if not self.cloud_backup:
+            return
+
+        try:
+            positions = []
+            for symbol, pos in self.position_tracker.positions.items():
+                positions.append({
+                    "symbol": pos.symbol,
+                    "direction": pos.direction,
+                    "entry_price": pos.entry_price,
+                    "size": pos.size,
+                    "entry_time": pos.entry_time.isoformat(),
+                    "strategy": pos.strategy,
+                    "conviction": pos.conviction,
+                    "order_id": pos.order_id,
+                    "leverage": pos.leverage,
+                    "current_price": pos.current_price,
+                    "unrealized_pnl": pos.unrealized_pnl,
+                })
+
+            await self.cloud_backup.store_position_state(positions)
+            logger.debug(f"Backed up {len(positions)} positions to cloud")
+
+        except Exception as e:
+            logger.warning(f"Position state backup failed (non-critical): {e}")
