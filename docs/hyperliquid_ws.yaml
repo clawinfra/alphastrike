@@ -1,0 +1,810 @@
+asyncapi: 3.0.0
+info:
+  title: Hyperliquid WebSocket API
+  version: 1.0.0
+  description: |
+    WebSocket API for real-time data streaming from Hyperliquid DEX.
+    
+    ## Connection
+    
+    Connect to the WebSocket endpoint and send subscription messages to receive real-time updates.
+    
+    **Important**: All automated users should handle disconnects gracefully and reconnect. 
+    Disconnections may happen periodically without announcement. Missed data during reconnect 
+    will be present in the snapshot acknowledgment on reconnect.
+    
+    ## Subscription Types
+    
+    - **allMids**: All mid prices
+    - **notification**: User notifications (fills, liquidations)
+    - **webData2**: User-specific data (fills, funding, non-funding ledger updates)
+    - **candle**: Candlestick data
+    - **l2Book**: Level 2 order book
+    - **trades**: Recent trades
+    - **orderUpdates**: User order updates
+    - **userEvents**: User events (fills, funding, liquidations)
+    - **userFills**: User fills
+    - **userFundings**: User funding payments
+    - **userNonFundingLedgerUpdates**: User non-funding ledger updates
+    
+    ## Post Requests
+    
+    WebSocket can also be used to send trading requests (alternative to HTTP).
+  contact:
+    name: Hyperliquid Documentation
+    url: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/websocket
+
+servers:
+  mainnet:
+    host: api.hyperliquid.xyz
+    protocol: wss
+    description: Mainnet WebSocket server
+  testnet:
+    host: api.hyperliquid-testnet.xyz
+    protocol: wss
+    description: Testnet WebSocket server
+
+channels:
+  allMids:
+    address: /ws
+    messages:
+      subscribe:
+        $ref: '#/components/messages/SubscribeAllMids'
+      update:
+        $ref: '#/components/messages/AllMidsUpdate'
+    description: Subscribe to all mid prices
+    
+  l2Book:
+    address: /ws
+    messages:
+      subscribe:
+        $ref: '#/components/messages/SubscribeL2Book'
+      snapshot:
+        $ref: '#/components/messages/L2BookSnapshot'
+      update:
+        $ref: '#/components/messages/L2BookUpdate'
+    description: Subscribe to Level 2 order book for a specific coin
+    
+  trades:
+    address: /ws
+    messages:
+      subscribe:
+        $ref: '#/components/messages/SubscribeTrades'
+      update:
+        $ref: '#/components/messages/TradesUpdate'
+    description: Subscribe to recent trades for a specific coin
+    
+  candle:
+    address: /ws
+    messages:
+      subscribe:
+        $ref: '#/components/messages/SubscribeCandle'
+      update:
+        $ref: '#/components/messages/CandleUpdate'
+    description: Subscribe to candlestick data
+    
+  userEvents:
+    address: /ws
+    messages:
+      subscribe:
+        $ref: '#/components/messages/SubscribeUserEvents'
+      fill:
+        $ref: '#/components/messages/UserFillEvent'
+      funding:
+        $ref: '#/components/messages/UserFundingEvent'
+      liquidation:
+        $ref: '#/components/messages/UserLiquidationEvent'
+      nonFundingLedgerUpdate:
+        $ref: '#/components/messages/NonFundingLedgerUpdate'
+    description: Subscribe to user-specific events
+    
+  orderUpdates:
+    address: /ws
+    messages:
+      subscribe:
+        $ref: '#/components/messages/SubscribeOrderUpdates'
+      update:
+        $ref: '#/components/messages/OrderUpdate'
+    description: Subscribe to user order updates
+    
+  webData2:
+    address: /ws
+    messages:
+      subscribe:
+        $ref: '#/components/messages/SubscribeWebData2'
+      update:
+        $ref: '#/components/messages/WebData2Update'
+    description: Subscribe to comprehensive user data
+
+operations:
+  subscribeAllMids:
+    action: send
+    channel:
+      $ref: '#/channels/allMids'
+    messages:
+      - $ref: '#/components/messages/SubscribeAllMids'
+      
+  receiveAllMids:
+    action: receive
+    channel:
+      $ref: '#/channels/allMids'
+    messages:
+      - $ref: '#/components/messages/AllMidsUpdate'
+      
+  subscribeL2Book:
+    action: send
+    channel:
+      $ref: '#/channels/l2Book'
+    messages:
+      - $ref: '#/components/messages/SubscribeL2Book'
+      
+  receiveL2Book:
+    action: receive
+    channel:
+      $ref: '#/channels/l2Book'
+    messages:
+      - $ref: '#/components/messages/L2BookSnapshot'
+      - $ref: '#/components/messages/L2BookUpdate'
+      
+  subscribeTrades:
+    action: send
+    channel:
+      $ref: '#/channels/trades'
+    messages:
+      - $ref: '#/components/messages/SubscribeTrades'
+      
+  receiveTrades:
+    action: receive
+    channel:
+      $ref: '#/channels/trades'
+    messages:
+      - $ref: '#/components/messages/TradesUpdate'
+      
+  subscribeCandle:
+    action: send
+    channel:
+      $ref: '#/channels/candle'
+    messages:
+      - $ref: '#/components/messages/SubscribeCandle'
+      
+  receiveCandle:
+    action: receive
+    channel:
+      $ref: '#/channels/candle'
+    messages:
+      - $ref: '#/components/messages/CandleUpdate'
+      
+  subscribeUserEvents:
+    action: send
+    channel:
+      $ref: '#/channels/userEvents'
+    messages:
+      - $ref: '#/components/messages/SubscribeUserEvents'
+      
+  receiveUserEvents:
+    action: receive
+    channel:
+      $ref: '#/channels/userEvents'
+    messages:
+      - $ref: '#/components/messages/UserFillEvent'
+      - $ref: '#/components/messages/UserFundingEvent'
+      - $ref: '#/components/messages/UserLiquidationEvent'
+      - $ref: '#/components/messages/NonFundingLedgerUpdate'
+
+components:
+  messages:
+    SubscribeAllMids:
+      name: SubscribeAllMids
+      title: Subscribe to All Mids
+      summary: Subscribe to receive all mid price updates
+      payload:
+        $ref: '#/components/schemas/SubscribeAllMidsPayload'
+      examples:
+        - name: Subscribe to all mids
+          payload:
+            method: subscribe
+            subscription:
+              type: allMids
+              
+    AllMidsUpdate:
+      name: AllMidsUpdate
+      title: All Mids Update
+      summary: Real-time update of all mid prices
+      payload:
+        $ref: '#/components/schemas/AllMidsUpdatePayload'
+      examples:
+        - name: Mid prices update
+          payload:
+            channel: allMids
+            data:
+              mids:
+                BTC: "50000.0"
+                ETH: "3000.0"
+                SOL: "100.0"
+                
+    SubscribeL2Book:
+      name: SubscribeL2Book
+      title: Subscribe to L2 Order Book
+      summary: Subscribe to Level 2 order book updates for a coin
+      payload:
+        $ref: '#/components/schemas/SubscribeL2BookPayload'
+      examples:
+        - name: Subscribe to BTC order book
+          payload:
+            method: subscribe
+            subscription:
+              type: l2Book
+              coin: BTC
+              nSigFigs: 5
+              
+    L2BookSnapshot:
+      name: L2BookSnapshot
+      title: L2 Book Snapshot
+      summary: Initial snapshot of the order book
+      payload:
+        $ref: '#/components/schemas/L2BookSnapshotPayload'
+      examples:
+        - name: Order book snapshot
+          payload:
+            channel: l2Book
+            data:
+              coin: BTC
+              time: 1700000000000
+              levels:
+                - - px: "49900.0"
+                    sz: "1.5"
+                    n: 3
+                - - px: "50100.0"
+                    sz: "1.2"
+                    n: 2
+                    
+    L2BookUpdate:
+      name: L2BookUpdate
+      title: L2 Book Update
+      summary: Incremental update to the order book
+      payload:
+        $ref: '#/components/schemas/L2BookUpdatePayload'
+        
+    SubscribeTrades:
+      name: SubscribeTrades
+      title: Subscribe to Trades
+      summary: Subscribe to recent trades for a coin
+      payload:
+        $ref: '#/components/schemas/SubscribeTradesPayload'
+      examples:
+        - name: Subscribe to BTC trades
+          payload:
+            method: subscribe
+            subscription:
+              type: trades
+              coin: BTC
+              
+    TradesUpdate:
+      name: TradesUpdate
+      title: Trades Update
+      summary: Recent trades update
+      payload:
+        $ref: '#/components/schemas/TradesUpdatePayload'
+      examples:
+        - name: Trade updates
+          payload:
+            channel: trades
+            data:
+              - coin: BTC
+                side: B
+                px: "50000.0"
+                sz: "0.1"
+                time: 1700000000000
+                hash: "0x..."
+                tid: 123456789
+                
+    SubscribeCandle:
+      name: SubscribeCandle
+      title: Subscribe to Candles
+      summary: Subscribe to candlestick data
+      payload:
+        $ref: '#/components/schemas/SubscribeCandlePayload'
+      examples:
+        - name: Subscribe to BTC 15m candles
+          payload:
+            method: subscribe
+            subscription:
+              type: candle
+              coin: BTC
+              interval: "15m"
+              
+    CandleUpdate:
+      name: CandleUpdate
+      title: Candle Update
+      summary: Candlestick data update
+      payload:
+        $ref: '#/components/schemas/CandleUpdatePayload'
+        
+    SubscribeUserEvents:
+      name: SubscribeUserEvents
+      title: Subscribe to User Events
+      summary: Subscribe to user-specific events (fills, funding, liquidations)
+      payload:
+        $ref: '#/components/schemas/SubscribeUserEventsPayload'
+      examples:
+        - name: Subscribe to user events
+          payload:
+            method: subscribe
+            subscription:
+              type: userEvents
+              user: "0x0000000000000000000000000000000000000000"
+              
+    UserFillEvent:
+      name: UserFillEvent
+      title: User Fill Event
+      summary: User order fill notification
+      payload:
+        $ref: '#/components/schemas/UserFillEventPayload'
+        
+    UserFundingEvent:
+      name: UserFundingEvent
+      title: User Funding Event
+      summary: User funding payment notification
+      payload:
+        $ref: '#/components/schemas/UserFundingEventPayload'
+        
+    UserLiquidationEvent:
+      name: UserLiquidationEvent
+      title: User Liquidation Event
+      summary: User liquidation notification
+      payload:
+        $ref: '#/components/schemas/UserLiquidationEventPayload'
+        
+    NonFundingLedgerUpdate:
+      name: NonFundingLedgerUpdate
+      title: Non-Funding Ledger Update
+      summary: Non-funding ledger update (deposits, withdrawals, etc.)
+      payload:
+        $ref: '#/components/schemas/NonFundingLedgerUpdatePayload'
+        
+    SubscribeOrderUpdates:
+      name: SubscribeOrderUpdates
+      title: Subscribe to Order Updates
+      summary: Subscribe to user order updates
+      payload:
+        $ref: '#/components/schemas/SubscribeOrderUpdatesPayload'
+      examples:
+        - name: Subscribe to order updates
+          payload:
+            method: subscribe
+            subscription:
+              type: orderUpdates
+              user: "0x0000000000000000000000000000000000000000"
+              
+    OrderUpdate:
+      name: OrderUpdate
+      title: Order Update
+      summary: Order status update
+      payload:
+        $ref: '#/components/schemas/OrderUpdatePayload'
+        
+    SubscribeWebData2:
+      name: SubscribeWebData2
+      title: Subscribe to WebData2
+      summary: Subscribe to comprehensive user data
+      payload:
+        $ref: '#/components/schemas/SubscribeWebData2Payload'
+      examples:
+        - name: Subscribe to webData2
+          payload:
+            method: subscribe
+            subscription:
+              type: webData2
+              user: "0x0000000000000000000000000000000000000000"
+              
+    WebData2Update:
+      name: WebData2Update
+      title: WebData2 Update
+      summary: Comprehensive user data update
+      payload:
+        $ref: '#/components/schemas/WebData2UpdatePayload'
+        
+  schemas:
+    SubscribeAllMidsPayload:
+      type: object
+      required: [method, subscription]
+      properties:
+        method:
+          type: string
+          enum: [subscribe]
+        subscription:
+          type: object
+          required: [type]
+          properties:
+            type:
+              type: string
+              enum: [allMids]
+              
+    AllMidsUpdatePayload:
+      type: object
+      properties:
+        channel:
+          type: string
+          enum: [allMids]
+        data:
+          type: object
+          properties:
+            mids:
+              type: object
+              additionalProperties:
+                type: string
+                description: Mid price for each coin
+                
+    SubscribeL2BookPayload:
+      type: object
+      required: [method, subscription]
+      properties:
+        method:
+          type: string
+          enum: [subscribe]
+        subscription:
+          type: object
+          required: [type, coin]
+          properties:
+            type:
+              type: string
+              enum: [l2Book]
+            coin:
+              type: string
+              description: Coin symbol
+            nSigFigs:
+              type: integer
+              enum: [2, 3, 4, 5]
+              description: Aggregate to n significant figures
+            nLevels:
+              type: integer
+              description: Number of levels to return (default 20)
+              
+    L2BookSnapshotPayload:
+      type: object
+      properties:
+        channel:
+          type: string
+          enum: [l2Book]
+        data:
+          type: object
+          properties:
+            coin:
+              type: string
+            time:
+              type: integer
+              format: int64
+            levels:
+              type: array
+              items:
+                type: array
+                description: "[bids, asks]"
+                items:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      px:
+                        type: string
+                      sz:
+                        type: string
+                      n:
+                        type: integer
+                        
+    L2BookUpdatePayload:
+      type: object
+      properties:
+        channel:
+          type: string
+          enum: [l2Book]
+        data:
+          type: object
+          properties:
+            coin:
+              type: string
+            time:
+              type: integer
+              format: int64
+            levels:
+              type: array
+              description: Updated levels
+              
+    SubscribeTradesPayload:
+      type: object
+      required: [method, subscription]
+      properties:
+        method:
+          type: string
+          enum: [subscribe]
+        subscription:
+          type: object
+          required: [type, coin]
+          properties:
+            type:
+              type: string
+              enum: [trades]
+            coin:
+              type: string
+              
+    TradesUpdatePayload:
+      type: object
+      properties:
+        channel:
+          type: string
+          enum: [trades]
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              coin:
+                type: string
+              side:
+                type: string
+                enum: [B, A]
+              px:
+                type: string
+              sz:
+                type: string
+              time:
+                type: integer
+                format: int64
+              hash:
+                type: string
+              tid:
+                type: integer
+                format: int64
+                
+    SubscribeCandlePayload:
+      type: object
+      required: [method, subscription]
+      properties:
+        method:
+          type: string
+          enum: [subscribe]
+        subscription:
+          type: object
+          required: [type, coin, interval]
+          properties:
+            type:
+              type: string
+              enum: [candle]
+            coin:
+              type: string
+            interval:
+              type: string
+              enum: ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "8h", "12h", "1d", "3d", "1w", "1M"]
+              
+    CandleUpdatePayload:
+      type: object
+      properties:
+        channel:
+          type: string
+          enum: [candle]
+        data:
+          type: object
+          properties:
+            t:
+              type: integer
+              format: int64
+            T:
+              type: integer
+              format: int64
+            s:
+              type: string
+            i:
+              type: string
+            o:
+              type: string
+            h:
+              type: string
+            l:
+              type: string
+            c:
+              type: string
+            v:
+              type: string
+            n:
+              type: integer
+              
+    SubscribeUserEventsPayload:
+      type: object
+      required: [method, subscription]
+      properties:
+        method:
+          type: string
+          enum: [subscribe]
+        subscription:
+          type: object
+          required: [type, user]
+          properties:
+            type:
+              type: string
+              enum: [userEvents]
+            user:
+              type: string
+              pattern: '^0x[a-fA-F0-9]{40}$'
+              
+    UserFillEventPayload:
+      type: object
+      properties:
+        channel:
+          type: string
+          enum: [userEvents]
+        data:
+          type: object
+          properties:
+            fills:
+              type: array
+              items:
+                type: object
+                properties:
+                  coin:
+                    type: string
+                  px:
+                    type: string
+                  sz:
+                    type: string
+                  side:
+                    type: string
+                  time:
+                    type: integer
+                    format: int64
+                  startPosition:
+                    type: string
+                  dir:
+                    type: string
+                  closedPnl:
+                    type: string
+                  hash:
+                    type: string
+                  oid:
+                    type: integer
+                    format: int64
+                  crossed:
+                    type: boolean
+                  fee:
+                    type: string
+                  tid:
+                    type: integer
+                    format: int64
+                    
+    UserFundingEventPayload:
+      type: object
+      properties:
+        channel:
+          type: string
+          enum: [userEvents]
+        data:
+          type: object
+          properties:
+            fundings:
+              type: array
+              items:
+                type: object
+                properties:
+                  time:
+                    type: integer
+                    format: int64
+                  coin:
+                    type: string
+                  usdc:
+                    type: string
+                  szi:
+                    type: string
+                  fundingRate:
+                    type: string
+                    
+    UserLiquidationEventPayload:
+      type: object
+      properties:
+        channel:
+          type: string
+          enum: [userEvents]
+        data:
+          type: object
+          properties:
+            liquidation:
+              type: object
+              properties:
+                lid:
+                  type: integer
+                  format: int64
+                liquidator:
+                  type: string
+                liquidated_user:
+                  type: string
+                liquidated_ntl_pos:
+                  type: string
+                liquidated_account_value:
+                  type: string
+                    
+    NonFundingLedgerUpdatePayload:
+      type: object
+      properties:
+        channel:
+          type: string
+          enum: [userEvents]
+        data:
+          type: object
+          properties:
+            ledgerUpdates:
+              type: array
+              items:
+                type: object
+                properties:
+                  time:
+                    type: integer
+                    format: int64
+                  hash:
+                    type: string
+                  delta:
+                    type: object
+                    
+    SubscribeOrderUpdatesPayload:
+      type: object
+      required: [method, subscription]
+      properties:
+        method:
+          type: string
+          enum: [subscribe]
+        subscription:
+          type: object
+          required: [type, user]
+          properties:
+            type:
+              type: string
+              enum: [orderUpdates]
+            user:
+              type: string
+              pattern: '^0x[a-fA-F0-9]{40}$'
+              
+    OrderUpdatePayload:
+      type: object
+      properties:
+        channel:
+          type: string
+          enum: [orderUpdates]
+        data:
+          type: object
+          properties:
+            orders:
+              type: array
+              items:
+                type: object
+                properties:
+                  order:
+                    type: object
+                  status:
+                    type: string
+                  statusTimestamp:
+                    type: integer
+                    format: int64
+                    
+    SubscribeWebData2Payload:
+      type: object
+      required: [method, subscription]
+      properties:
+        method:
+          type: string
+          enum: [subscribe]
+        subscription:
+          type: object
+          required: [type, user]
+          properties:
+            type:
+              type: string
+              enum: [webData2]
+            user:
+              type: string
+              pattern: '^0x[a-fA-F0-9]{40}$'
+              
+    WebData2UpdatePayload:
+      type: object
+      properties:
+        channel:
+          type: string
+          enum: [webData2]
+        data:
+          type: object
+          description: Comprehensive user data including fills, funding, and ledger updates

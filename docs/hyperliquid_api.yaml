@@ -1,0 +1,1346 @@
+openapi: 3.1.0
+info:
+  title: Hyperliquid API
+  version: 1.0.0
+  description: |
+    Comprehensive API documentation for Hyperliquid DEX - a decentralized perpetual and spot exchange.
+    
+    ## Overview
+    
+    Hyperliquid provides REST API endpoints for querying market data and executing trades, plus WebSocket connections for real-time data streaming.
+    
+    ## Base URLs
+    
+    - **Mainnet**: `https://api.hyperliquid.xyz`
+    - **Testnet**: `https://api.hyperliquid-testnet.xyz`
+    
+    ## WebSocket URLs
+    
+    - **Mainnet**: `wss://api.hyperliquid.xyz/ws`
+    - **Testnet**: `wss://api.hyperliquid-testnet.xyz/ws`
+    
+    ## Authentication
+    
+    Trading operations require EIP-712 signatures. See the [Signing documentation](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/signing) for details.
+    
+    ## Rate Limits
+    
+    Rate limits are address-based and can be increased through trading volume or by reserving additional actions.
+    
+    ## SDKs
+    
+    - **Python**: [hyperliquid-python-sdk](https://github.com/hyperliquid-dex/hyperliquid-python-sdk)
+    - **TypeScript**: [nktkas/hyperliquid](https://github.com/nktkas/hyperliquid), [nomeida/hyperliquid](https://github.com/nomeida/hyperliquid)
+    - **Rust**: [infinitefield/hypersdk](https://github.com/infinitefield/hypersdk)
+    
+  contact:
+    name: Hyperliquid Documentation
+    url: https://hyperliquid.gitbook.io/hyperliquid-docs
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://api.hyperliquid.xyz
+    description: Mainnet
+  - url: https://api.hyperliquid-testnet.xyz
+    description: Testnet
+
+security:
+  - {}  # Most endpoints are public, trading endpoints require signatures in request body
+
+tags:
+  - name: Info
+    description: Query market data, user positions, orders, and account information
+  - name: Exchange
+    description: Execute trades, manage orders, and perform account operations
+  - name: Market Data
+    description: Real-time and historical market data
+  - name: Orders
+    description: Order management and history
+  - name: Account
+    description: Account state, positions, and balances
+  - name: Staking
+    description: Staking and delegation operations
+  - name: Vault
+    description: Vault deposits and management
+
+paths:
+  /info:
+    post:
+      tags: [Info, Market Data, Orders, Account, Staking]
+      summary: Query information endpoint
+      description: |
+        Unified endpoint for querying various types of information. The request body `type` field determines what data is returned.
+        
+        Supports queries for:
+        - Market data (mids, candles, order books)
+        - User data (orders, fills, positions)
+        - Account data (balances, fees, referrals)
+        - Staking data (delegations, rewards)
+      operationId: queryInfo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/AllMidsRequest'
+                - $ref: '#/components/schemas/OpenOrdersRequest'
+                - $ref: '#/components/schemas/FrontendOpenOrdersRequest'
+                - $ref: '#/components/schemas/UserFillsRequest'
+                - $ref: '#/components/schemas/UserFillsByTimeRequest'
+                - $ref: '#/components/schemas/OrderStatusRequest'
+                - $ref: '#/components/schemas/L2BookRequest'
+                - $ref: '#/components/schemas/CandleSnapshotRequest'
+                - $ref: '#/components/schemas/MetaRequest'
+                - $ref: '#/components/schemas/UserStateRequest'
+                - $ref: '#/components/schemas/UserRateLimitRequest'
+                - $ref: '#/components/schemas/HistoricalOrdersRequest'
+                - $ref: '#/components/schemas/SubAccountsRequest'
+                - $ref: '#/components/schemas/VaultDetailsRequest'
+                - $ref: '#/components/schemas/UserRoleRequest'
+                - $ref: '#/components/schemas/PortfolioRequest'
+                - $ref: '#/components/schemas/ReferralRequest'
+                - $ref: '#/components/schemas/UserFeesRequest'
+                - $ref: '#/components/schemas/DelegationsRequest'
+            examples:
+              allMids:
+                summary: Get all mid prices
+                value:
+                  type: allMids
+              openOrders:
+                summary: Get user's open orders
+                value:
+                  type: openOrders
+                  user: "0x0000000000000000000000000000000000000000"
+              l2Book:
+                summary: Get L2 order book
+                value:
+                  type: l2Book
+                  coin: BTC
+                  nSigFigs: 5
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/AllMidsResponse'
+                  - $ref: '#/components/schemas/OpenOrdersResponse'
+                  - $ref: '#/components/schemas/UserFillsResponse'
+                  - $ref: '#/components/schemas/OrderStatusResponse'
+                  - $ref: '#/components/schemas/L2BookResponse'
+                  - $ref: '#/components/schemas/CandleSnapshotResponse'
+              examples:
+                allMids:
+                  summary: All mid prices
+                  value:
+                    BTC: "50000.0"
+                    ETH: "3000.0"
+                    SOL: "100.0"
+                openOrders:
+                  summary: User's open orders
+                  value:
+                    - coin: BTC
+                      side: B
+                      limitPx: "49000.0"
+                      sz: "0.1"
+                      oid: 123456
+                      timestamp: 1234567890000
+
+  /exchange:
+    post:
+      tags: [Exchange, Orders, Account, Staking, Vault]
+      summary: Execute exchange operations
+      description: |
+        Unified endpoint for all trading and account operations. Requires EIP-712 signature for authentication.
+        
+        Supported operations:
+        - Place, cancel, modify orders
+        - Update leverage and margin
+        - Transfer funds
+        - Manage vaults and staking
+      operationId: executeExchange
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/PlaceOrderRequest'
+                - $ref: '#/components/schemas/CancelOrderRequest'
+                - $ref: '#/components/schemas/CancelByCloidRequest'
+                - $ref: '#/components/schemas/ModifyOrderRequest'
+                - $ref: '#/components/schemas/UpdateLeverageRequest'
+                - $ref: '#/components/schemas/UsdTransferRequest'
+                - $ref: '#/components/schemas/TwapOrderRequest'
+            examples:
+              placeOrder:
+                summary: Place a limit order
+                value:
+                  action:
+                    type: order
+                    orders:
+                      - a: 0
+                        b: true
+                        p: "50000.0"
+                        s: "0.1"
+                        r: false
+                        t:
+                          limit:
+                            tif: Gtc
+                    grouping: na
+                  nonce: 1234567890000
+                  signature:
+                    r: "0x..."
+                    s: "0x..."
+                    v: 27
+              cancelOrder:
+                summary: Cancel an order
+                value:
+                  action:
+                    type: cancel
+                    cancels:
+                      - a: 0
+                        o: 123456
+                  nonce: 1234567890000
+                  signature:
+                    r: "0x..."
+                    s: "0x..."
+                    v: 27
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/OrderResponse'
+                  - $ref: '#/components/schemas/CancelResponse'
+              examples:
+                orderPlaced:
+                  summary: Order successfully placed
+                  value:
+                    status: ok
+                    response:
+                      type: order
+                      data:
+                        statuses:
+                          - resting:
+                              oid: 123456
+                orderFilled:
+                  summary: Order immediately filled
+                  value:
+                    status: ok
+                    response:
+                      type: order
+                      data:
+                        statuses:
+                          - filled:
+                              totalSz: "0.1"
+                              avgPx: "50000.0"
+                              oid: 123456
+
+components:
+  schemas:
+    # ==================== Request Schemas ====================
+    
+    AllMidsRequest:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [allMids]
+          description: Request type identifier
+        dex:
+          type: string
+          description: Perp dex name (defaults to empty string for first perp dex)
+          default: ""
+      example:
+        type: allMids
+    
+    OpenOrdersRequest:
+      type: object
+      required: [type, user]
+      properties:
+        type:
+          type: string
+          enum: [openOrders]
+        user:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+          description: User address in 42-character hexadecimal format
+          example: "0x0000000000000000000000000000000000000000"
+        dex:
+          type: string
+          description: Perp dex name
+          default: ""
+    
+    FrontendOpenOrdersRequest:
+      type: object
+      required: [type, user]
+      properties:
+        type:
+          type: string
+          enum: [frontendOpenOrders]
+        user:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+          description: User address
+        dex:
+          type: string
+          default: ""
+    
+    UserFillsRequest:
+      type: object
+      required: [type, user]
+      properties:
+        type:
+          type: string
+          enum: [userFills]
+        user:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+          description: User address
+        aggregateByTime:
+          type: boolean
+          description: Combine partial fills when true
+          default: false
+      example:
+        type: userFills
+        user: "0x0000000000000000000000000000000000000000"
+        aggregateByTime: false
+    
+    UserFillsByTimeRequest:
+      type: object
+      required: [type, user, startTime]
+      properties:
+        type:
+          type: string
+          enum: [userFillsByTime]
+        user:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+        startTime:
+          type: integer
+          format: int64
+          description: Start time in milliseconds (inclusive)
+        endTime:
+          type: integer
+          format: int64
+          description: End time in milliseconds (inclusive, defaults to current time)
+        aggregateByTime:
+          type: boolean
+          default: false
+      example:
+        type: userFillsByTime
+        user: "0x0000000000000000000000000000000000000000"
+        startTime: 1700000000000
+        endTime: 1700086400000
+    
+    OrderStatusRequest:
+      type: object
+      required: [type, user, oid]
+      properties:
+        type:
+          type: string
+          enum: [orderStatus]
+        user:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+        oid:
+          oneOf:
+            - type: integer
+              format: int64
+              description: Order ID as integer
+            - type: string
+              pattern: '^0x[a-fA-F0-9]{32}$'
+              description: Client Order ID as 16-byte hex string
+          example: 123456
+      example:
+        type: orderStatus
+        user: "0x0000000000000000000000000000000000000000"
+        oid: 123456
+    
+    L2BookRequest:
+      type: object
+      required: [type, coin]
+      properties:
+        type:
+          type: string
+          enum: [l2Book]
+        coin:
+          type: string
+          description: Coin symbol (e.g., BTC, ETH) or spot pair (e.g., @107 for HYPE/USDC)
+          example: BTC
+        nSigFigs:
+          type: integer
+          enum: [2, 3, 4, 5]
+          description: Aggregate levels to n significant figures
+        mantissa:
+          type: integer
+          enum: [1, 2, 5]
+          description: Mantissa for aggregation (only allowed if nSigFigs is 5)
+      example:
+        type: l2Book
+        coin: BTC
+        nSigFigs: 5
+    
+    CandleSnapshotRequest:
+      type: object
+      required: [type, req]
+      properties:
+        type:
+          type: string
+          enum: [candleSnapshot]
+        req:
+          type: object
+          required: [coin, interval, startTime]
+          properties:
+            coin:
+              type: string
+              description: Coin symbol
+              example: BTC
+            interval:
+              type: string
+              enum: ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "8h", "12h", "1d", "3d", "1w", "1M"]
+              description: Candle interval
+              example: "15m"
+            startTime:
+              type: integer
+              format: int64
+              description: Start time in epoch milliseconds
+            endTime:
+              type: integer
+              format: int64
+              description: End time in epoch milliseconds (optional)
+      example:
+        type: candleSnapshot
+        req:
+          coin: BTC
+          interval: "15m"
+          startTime: 1700000000000
+          endTime: 1700086400000
+    
+    MetaRequest:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [meta, spotMeta]
+          description: Get perpetual or spot market metadata
+      example:
+        type: meta
+    
+    UserStateRequest:
+      type: object
+      required: [type, user]
+      properties:
+        type:
+          type: string
+          enum: [clearinghouseState, spotClearinghouseState]
+          description: Get user's perpetual or spot account state
+        user:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+      example:
+        type: clearinghouseState
+        user: "0x0000000000000000000000000000000000000000"
+    
+    UserRateLimitRequest:
+      type: object
+      required: [type, user]
+      properties:
+        type:
+          type: string
+          enum: [userRateLimit]
+        user:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+    
+    HistoricalOrdersRequest:
+      type: object
+      required: [type, user]
+      properties:
+        type:
+          type: string
+          enum: [historicalOrders]
+        user:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+      description: Returns at most 2000 most recent historical orders
+    
+    SubAccountsRequest:
+      type: object
+      required: [type, user]
+      properties:
+        type:
+          type: string
+          enum: [subAccounts]
+        user:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+    
+    VaultDetailsRequest:
+      type: object
+      required: [type, vaultAddress]
+      properties:
+        type:
+          type: string
+          enum: [vaultDetails]
+        vaultAddress:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+        user:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+          description: Optional user address
+    
+    UserRoleRequest:
+      type: object
+      required: [type, user]
+      properties:
+        type:
+          type: string
+          enum: [userRole]
+        user:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+    
+    PortfolioRequest:
+      type: object
+      required: [type, user]
+      properties:
+        type:
+          type: string
+          enum: [portfolio]
+        user:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+    
+    ReferralRequest:
+      type: object
+      required: [type, user]
+      properties:
+        type:
+          type: string
+          enum: [referral]
+        user:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+    
+    UserFeesRequest:
+      type: object
+      required: [type, user]
+      properties:
+        type:
+          type: string
+          enum: [userFees]
+        user:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+    
+    DelegationsRequest:
+      type: object
+      required: [type, user]
+      properties:
+        type:
+          type: string
+          enum: [delegations]
+        user:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+    
+    # ==================== Exchange Request Schemas ====================
+    
+    PlaceOrderRequest:
+      type: object
+      required: [action, nonce, signature]
+      properties:
+        action:
+          type: object
+          required: [type, orders, grouping]
+          properties:
+            type:
+              type: string
+              enum: [order]
+            orders:
+              type: array
+              items:
+                $ref: '#/components/schemas/OrderSpec'
+            grouping:
+              type: string
+              enum: [na, normalTpsl, positionTpsl]
+              description: Order grouping type
+            builder:
+              type: object
+              properties:
+                b:
+                  type: string
+                  pattern: '^0x[a-fA-F0-9]{40}$'
+                  description: Builder address to receive fee
+                f:
+                  type: integer
+                  description: Fee in tenths of basis point (e.g., 10 = 1bp)
+        nonce:
+          type: integer
+          format: int64
+          description: Current timestamp in milliseconds
+        signature:
+          $ref: '#/components/schemas/Signature'
+        vaultAddress:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+          description: Vault or subaccount address (if trading on behalf of)
+        expiresAfter:
+          type: integer
+          format: int64
+          description: Timestamp in milliseconds after which action is rejected
+    
+    OrderSpec:
+      type: object
+      required: [a, b, p, s, r, t]
+      properties:
+        a:
+          type: integer
+          description: Asset index
+        b:
+          type: boolean
+          description: Is buy order
+        p:
+          type: string
+          description: Limit price
+          example: "50000.0"
+        s:
+          type: string
+          description: Order size
+          example: "0.1"
+        r:
+          type: boolean
+          description: Reduce only flag
+        t:
+          oneOf:
+            - type: object
+              required: [limit]
+              properties:
+                limit:
+                  type: object
+                  required: [tif]
+                  properties:
+                    tif:
+                      type: string
+                      enum: [Alo, Ioc, Gtc]
+                      description: Time in force (Alo=post only, Ioc=immediate or cancel, Gtc=good til canceled)
+            - type: object
+              required: [trigger]
+              properties:
+                trigger:
+                  type: object
+                  required: [isMarket, triggerPx, tpsl]
+                  properties:
+                    isMarket:
+                      type: boolean
+                    triggerPx:
+                      type: string
+                      description: Trigger price
+                    tpsl:
+                      type: string
+                      enum: [tp, sl]
+                      description: Take profit or stop loss
+        c:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{32}$'
+          description: Client order ID (128-bit hex string)
+    
+    CancelOrderRequest:
+      type: object
+      required: [action, nonce, signature]
+      properties:
+        action:
+          type: object
+          required: [type, cancels]
+          properties:
+            type:
+              type: string
+              enum: [cancel]
+            cancels:
+              type: array
+              items:
+                type: object
+                required: [a, o]
+                properties:
+                  a:
+                    type: integer
+                    description: Asset index
+                  o:
+                    type: integer
+                    format: int64
+                    description: Order ID
+        nonce:
+          type: integer
+          format: int64
+        signature:
+          $ref: '#/components/schemas/Signature'
+        vaultAddress:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+        expiresAfter:
+          type: integer
+          format: int64
+    
+    CancelByCloidRequest:
+      type: object
+      required: [action, nonce, signature]
+      properties:
+        action:
+          type: object
+          required: [type, cancels]
+          properties:
+            type:
+              type: string
+              enum: [cancelByCloid]
+            cancels:
+              type: array
+              items:
+                type: object
+                required: [asset, cloid]
+                properties:
+                  asset:
+                    type: integer
+                  cloid:
+                    type: string
+                    pattern: '^0x[a-fA-F0-9]{32}$'
+        nonce:
+          type: integer
+          format: int64
+        signature:
+          $ref: '#/components/schemas/Signature'
+        vaultAddress:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+        expiresAfter:
+          type: integer
+          format: int64
+    
+    ModifyOrderRequest:
+      type: object
+      required: [action, nonce, signature]
+      properties:
+        action:
+          type: object
+          required: [type, oid, order]
+          properties:
+            type:
+              type: string
+              enum: [modify]
+            oid:
+              oneOf:
+                - type: integer
+                  format: int64
+                - type: string
+                  pattern: '^0x[a-fA-F0-9]{32}$'
+              description: Order ID or Client Order ID
+            order:
+              $ref: '#/components/schemas/OrderSpec'
+        nonce:
+          type: integer
+          format: int64
+        signature:
+          $ref: '#/components/schemas/Signature'
+        vaultAddress:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+        expiresAfter:
+          type: integer
+          format: int64
+    
+    UpdateLeverageRequest:
+      type: object
+      required: [action, nonce, signature]
+      properties:
+        action:
+          type: object
+          required: [type, asset, isCross, leverage]
+          properties:
+            type:
+              type: string
+              enum: [updateLeverage]
+            asset:
+              type: integer
+              description: Asset index
+            isCross:
+              type: boolean
+              description: Update cross leverage if true
+            leverage:
+              type: integer
+              description: New leverage value
+              minimum: 1
+        nonce:
+          type: integer
+          format: int64
+        signature:
+          $ref: '#/components/schemas/Signature'
+        vaultAddress:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+        expiresAfter:
+          type: integer
+          format: int64
+    
+    UsdTransferRequest:
+      type: object
+      required: [action, nonce, signature]
+      properties:
+        action:
+          type: object
+          required: [type, hyperliquidChain, signatureChainId, destination, amount, time]
+          properties:
+            type:
+              type: string
+              enum: [usdSend]
+            hyperliquidChain:
+              type: string
+              enum: [Mainnet, Testnet]
+            signatureChainId:
+              type: string
+              pattern: '^0x[a-fA-F0-9]+$'
+              description: Chain ID in hex (e.g., 0xa4b1 for Arbitrum)
+              example: "0xa4b1"
+            destination:
+              type: string
+              pattern: '^0x[a-fA-F0-9]{40}$'
+            amount:
+              type: string
+              description: Amount in USD
+              example: "100.0"
+            time:
+              type: integer
+              format: int64
+              description: Current timestamp in milliseconds
+        nonce:
+          type: integer
+          format: int64
+        signature:
+          $ref: '#/components/schemas/Signature'
+    
+    TwapOrderRequest:
+      type: object
+      required: [action, nonce, signature]
+      properties:
+        action:
+          type: object
+          required: [type, twap]
+          properties:
+            type:
+              type: string
+              enum: [twapOrder]
+            twap:
+              type: object
+              required: [a, b, s, r, m, t]
+              properties:
+                a:
+                  type: integer
+                  description: Asset index
+                b:
+                  type: boolean
+                  description: Is buy
+                s:
+                  type: string
+                  description: Size
+                r:
+                  type: boolean
+                  description: Reduce only
+                m:
+                  type: integer
+                  description: Duration in minutes
+                t:
+                  type: boolean
+                  description: Randomize execution
+        nonce:
+          type: integer
+          format: int64
+        signature:
+          $ref: '#/components/schemas/Signature'
+        vaultAddress:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+        expiresAfter:
+          type: integer
+          format: int64
+    
+    # ==================== Response Schemas ====================
+    
+    AllMidsResponse:
+      type: object
+      additionalProperties:
+        type: string
+        description: Mid price for each coin
+      example:
+        BTC: "50000.0"
+        ETH: "3000.0"
+        SOL: "100.0"
+    
+    OpenOrdersResponse:
+      type: array
+      items:
+        $ref: '#/components/schemas/OpenOrder'
+    
+    OpenOrder:
+      type: object
+      properties:
+        coin:
+          type: string
+          description: Coin symbol
+        side:
+          type: string
+          enum: [B, A]
+          description: Buy or Ask (sell)
+        limitPx:
+          type: string
+          description: Limit price
+        sz:
+          type: string
+          description: Remaining size
+        oid:
+          type: integer
+          format: int64
+          description: Order ID
+        timestamp:
+          type: integer
+          format: int64
+          description: Order timestamp in milliseconds
+        origSz:
+          type: string
+          description: Original size
+        cloid:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{32}$'
+          description: Client order ID
+    
+    FrontendOpenOrder:
+      allOf:
+        - $ref: '#/components/schemas/OpenOrder'
+        - type: object
+          properties:
+            isPositionTpsl:
+              type: boolean
+            isTrigger:
+              type: boolean
+            orderType:
+              type: string
+              enum: [Limit, Market, Trigger]
+            reduceOnly:
+              type: boolean
+            triggerCondition:
+              type: string
+            triggerPx:
+              type: string
+    
+    UserFillsResponse:
+      type: array
+      items:
+        $ref: '#/components/schemas/Fill'
+    
+    Fill:
+      type: object
+      properties:
+        coin:
+          type: string
+          description: Coin symbol or spot pair (e.g., @107)
+        px:
+          type: string
+          description: Fill price
+        sz:
+          type: string
+          description: Fill size
+        side:
+          type: string
+          enum: [B, A]
+        time:
+          type: integer
+          format: int64
+          description: Fill timestamp in milliseconds
+        startPosition:
+          type: string
+          description: Position size before fill
+        dir:
+          type: string
+          description: Direction (e.g., "Open Long", "Close Short", "Sell")
+        closedPnl:
+          type: string
+          description: Realized PnL from this fill
+        hash:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{64}$'
+          description: Transaction hash
+        oid:
+          type: integer
+          format: int64
+          description: Order ID
+        crossed:
+          type: boolean
+          description: Whether order crossed the spread
+        fee:
+          type: string
+          description: Total fee paid
+        feeToken:
+          type: string
+          description: Token used for fee payment
+        tid:
+          type: integer
+          format: int64
+          description: Trade ID
+        builderFee:
+          type: string
+          description: Builder fee (optional)
+    
+    OrderStatusResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [order, unknownOid]
+        order:
+          type: object
+          properties:
+            order:
+              $ref: '#/components/schemas/FrontendOpenOrder'
+            status:
+              type: string
+              enum: [open, filled, canceled, triggered, rejected, marginCanceled, vaultWithdrawalCanceled, openInterestCapCanceled, selfTradeCanceled, reduceOnlyCanceled, siblingFilledCanceled, delistedCanceled, liquidatedCanceled, scheduledCancel]
+              description: Order status
+            statusTimestamp:
+              type: integer
+              format: int64
+    
+    L2BookResponse:
+      type: object
+      properties:
+        coin:
+          type: string
+        time:
+          type: integer
+          format: int64
+        levels:
+          type: array
+          description: Two-element array containing bids and asks
+          items:
+            type: array
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/PriceLevel'
+      example:
+        coin: BTC
+        time: 1700000000000
+        levels:
+          - - px: "49900.0"
+              sz: "1.5"
+              n: 3
+            - px: "49800.0"
+              sz: "2.3"
+              n: 5
+          - - px: "50100.0"
+              sz: "1.2"
+              n: 2
+            - px: "50200.0"
+              sz: "0.8"
+              n: 1
+    
+    PriceLevel:
+      type: object
+      properties:
+        px:
+          type: string
+          description: Price
+        sz:
+          type: string
+          description: Size
+        n:
+          type: integer
+          description: Number of orders at this level
+    
+    CandleSnapshotResponse:
+      type: array
+      items:
+        $ref: '#/components/schemas/Candle'
+    
+    Candle:
+      type: object
+      properties:
+        t:
+          type: integer
+          format: int64
+          description: Candle start time (milliseconds)
+        T:
+          type: integer
+          format: int64
+          description: Candle end time (milliseconds)
+        s:
+          type: string
+          description: Symbol
+        i:
+          type: string
+          description: Interval
+        o:
+          type: string
+          description: Open price
+        h:
+          type: string
+          description: High price
+        l:
+          type: string
+          description: Low price
+        c:
+          type: string
+          description: Close price
+        v:
+          type: string
+          description: Volume
+        n:
+          type: integer
+          description: Number of trades
+    
+    OrderResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, err]
+        response:
+          type: object
+          properties:
+            type:
+              type: string
+              enum: [order]
+            data:
+              type: object
+              properties:
+                statuses:
+                  type: array
+                  items:
+                    oneOf:
+                      - type: object
+                        properties:
+                          resting:
+                            type: object
+                            properties:
+                              oid:
+                                type: integer
+                                format: int64
+                      - type: object
+                        properties:
+                          filled:
+                            type: object
+                            properties:
+                              totalSz:
+                                type: string
+                              avgPx:
+                                type: string
+                              oid:
+                                type: integer
+                                format: int64
+                      - type: object
+                        properties:
+                          error:
+                            type: string
+    
+    CancelResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, err]
+        response:
+          type: object
+          properties:
+            type:
+              type: string
+              enum: [cancel]
+            data:
+              type: object
+              properties:
+                statuses:
+                  type: array
+                  items:
+                    oneOf:
+                      - type: string
+                        enum: [success]
+                      - type: object
+                        properties:
+                          error:
+                            type: string
+    
+    Signature:
+      type: object
+      required: [r, s, v]
+      properties:
+        r:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{64}$'
+          description: Signature r value
+        s:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{64}$'
+          description: Signature s value
+        v:
+          type: integer
+          enum: [27, 28]
+          description: Signature v value
+    
+    UserState:
+      type: object
+      properties:
+        marginSummary:
+          $ref: '#/components/schemas/MarginSummary'
+        crossMarginSummary:
+          $ref: '#/components/schemas/MarginSummary'
+        crossMaintenanceMarginUsed:
+          type: string
+        withdrawable:
+          type: string
+        assetPositions:
+          type: array
+          items:
+            $ref: '#/components/schemas/AssetPosition'
+        time:
+          type: integer
+          format: int64
+    
+    MarginSummary:
+      type: object
+      properties:
+        accountValue:
+          type: string
+        totalNtlPos:
+          type: string
+          description: Total notional position value
+        totalRawUsd:
+          type: string
+        totalMarginUsed:
+          type: string
+    
+    AssetPosition:
+      type: object
+      properties:
+        position:
+          type: object
+          properties:
+            coin:
+              type: string
+            szi:
+              type: string
+              description: Signed size (positive for long, negative for short)
+            leverage:
+              type: object
+              properties:
+                type:
+                  type: string
+                  enum: [cross, isolated]
+                value:
+                  type: integer
+                rawUsd:
+                  type: string
+            entryPx:
+              type: string
+              description: Entry price
+            positionValue:
+              type: string
+            unrealizedPnl:
+              type: string
+            returnOnEquity:
+              type: string
+            liquidationPx:
+              type: string
+            marginUsed:
+              type: string
+            maxTradeSzs:
+              type: array
+              description: Two-element array with max long size and max short size
+              items:
+                type: string
+    
+    MetaResponse:
+      type: object
+      properties:
+        universe:
+          type: array
+          items:
+            $ref: '#/components/schemas/AssetMeta'
+    
+    AssetMeta:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Asset name
+        szDecimals:
+          type: integer
+          description: Size decimals
+        maxLeverage:
+          type: integer
+        onlyIsolated:
+          type: boolean
+    
+    SpotMetaResponse:
+      type: object
+      properties:
+        universe:
+          type: array
+          items:
+            $ref: '#/components/schemas/SpotAssetMeta'
+        tokens:
+          type: array
+          items:
+            $ref: '#/components/schemas/TokenInfo'
+    
+    SpotAssetMeta:
+      type: object
+      properties:
+        tokens:
+          type: array
+          description: Two-element array with base token index and quote token index
+          items:
+            type: integer
+        name:
+          type: string
+        index:
+          type: integer
+        isCanonical:
+          type: boolean
+    
+    TokenInfo:
+      type: object
+      properties:
+        name:
+          type: string
+        szDecimals:
+          type: integer
+        weiDecimals:
+          type: integer
+        index:
+          type: integer
+        tokenId:
+          type: string
+        evmContract:
+          type: string
+          pattern: '^0x[a-fA-F0-9]{40}$'
+
+x-tagGroups:
+  - name: Public Endpoints
+    tags:
+      - Info
+      - Market Data
+  - name: Trading
+    tags:
+      - Exchange
+      - Orders
+  - name: Account Management
+    tags:
+      - Account
+      - Staking
+      - Vault
