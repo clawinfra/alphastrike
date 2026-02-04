@@ -101,10 +101,14 @@ class HyperliquidRESTClient(ExchangeRESTProtocol):
         settings = get_settings()
 
         # Load credentials from config if not provided
+        # Only load wallet_address from settings if private_key is also from settings
+        # This ensures custom private_key will derive its own address
         if private_key is None:
             private_key = settings.exchange.wallet_private_key or None
-        if wallet_address is None:
-            wallet_address = settings.exchange.wallet_address or None
+            if wallet_address is None:
+                wallet_address = settings.exchange.wallet_address or None
+        # If private_key was provided explicitly, wallet_address should be derived
+        # from it (handled by HyperliquidSigner), not loaded from settings
 
         self.testnet = testnet
         self.base_url = base_url or (TESTNET_URL if testnet else MAINNET_URL)
@@ -495,19 +499,31 @@ class HyperliquidRESTClient(ExchangeRESTProtocol):
     # ==================== Account Operations ====================
 
     async def get_account_balance(self) -> UnifiedAccountBalance:
-        """Get account balance information."""
+        """Get account balance information.
+
+        Fetches both spot and perpetual balances:
+        - Spot USDC: The actual tradable balance (used as margin for perps)
+        - Perps margin: Amount currently used in perpetual positions
+        """
         if not self._signer.wallet_address:
             raise AuthenticationError(
                 "Wallet address required for account operations",
                 exchange=self.exchange_name,
             )
 
-        data = await self._info_request({
+        # Fetch spot balance (actual USDC holdings)
+        spot_data = await self._info_request({
+            "type": "spotClearinghouseState",
+            "user": self._signer.wallet_address,
+        })
+
+        # Fetch perps state (for unrealized PnL)
+        perps_data = await self._info_request({
             "type": "clearinghouseState",
             "user": self._signer.wallet_address,
         })
 
-        return HyperliquidMapper.to_unified_account_balance(data)
+        return HyperliquidMapper.to_unified_account_balance(spot_data, perps_data)
 
     async def get_positions(
         self,
