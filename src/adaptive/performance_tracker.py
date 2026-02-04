@@ -5,12 +5,12 @@ Monitors rolling performance metrics for each trading pair and
 generates retune signals when performance degrades.
 """
 
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import Optional, Literal
-from collections import deque
 import json
+from collections import deque
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Literal
 
 
 @dataclass
@@ -65,8 +65,8 @@ class AssetPerformance:
     equity: float = 0.0
 
     # Timestamps
-    last_trade_time: Optional[datetime] = None
-    last_updated: Optional[datetime] = None
+    last_trade_time: datetime | None = None
+    last_updated: datetime | None = None
 
     # Status
     needs_retune: bool = False
@@ -157,7 +157,7 @@ class PerformanceTracker:
         self._performance: dict[str, AssetPerformance] = {}
         self._triggers: list[RetuneTrigger] = []
 
-    def record_trade(self, trade: Trade) -> Optional[RetuneTrigger]:
+    def record_trade(self, trade: Trade) -> RetuneTrigger | None:
         """
         Record a completed trade and update performance metrics.
 
@@ -247,14 +247,14 @@ class PerformanceTracker:
         perf.current_drawdown = (peak - cumulative) / peak if peak > 0 else 0
 
         perf.last_trade_time = trades[-1].exit_time
-        perf.last_updated = datetime.now(timezone.utc)
+        perf.last_updated = datetime.now(UTC)
 
     def _get_window_trades(self, symbol: str) -> list[Trade]:
         """Get trades within the rolling window."""
-        cutoff = datetime.now(timezone.utc) - timedelta(days=self.window_days)
+        cutoff = datetime.now(UTC) - timedelta(days=self.window_days)
         return [t for t in self._trades.get(symbol, []) if t.exit_time >= cutoff]
 
-    def _check_triggers(self, symbol: str) -> Optional[RetuneTrigger]:
+    def _check_triggers(self, symbol: str) -> RetuneTrigger | None:
         """Check if any retune triggers are breached."""
         perf = self._performance[symbol]
 
@@ -297,7 +297,7 @@ class PerformanceTracker:
 
         return None
 
-    def get_performance(self, symbol: str) -> Optional[AssetPerformance]:
+    def get_performance(self, symbol: str) -> AssetPerformance | None:
         """Get current performance metrics for a symbol."""
         return self._performance.get(symbol)
 
@@ -352,7 +352,7 @@ class PerformanceTracker:
         """Load tracker state from file."""
         if not path.exists():
             return
-        with open(path, "r") as f:
-            state = json.load(f)
+        with open(path) as f:
+            _state = json.load(f)  # TODO: Implement state restoration
         # Note: This only loads performance summaries, not individual trades
         # Full trade history would need separate persistence

@@ -23,7 +23,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from src.features.alternative_signals import AlternativeSignals
 
 logger = logging.getLogger(__name__)
 
@@ -46,17 +49,20 @@ class ConvictionBreakdown:
     regime_clarity: float  # 0-20
     volume_confirmation: float  # 0-15
     technical_setup: float  # 0-10
+    alternative_signals: float = 0.0  # -10 to +10 (Simons-inspired boost)
 
     @property
     def total(self) -> float:
-        """Total conviction score (0-100)."""
-        return (
+        """Total conviction score (0-100, can exceed with alt signals)."""
+        base = (
             self.timeframe_alignment
             + self.ensemble_confidence
             + self.regime_clarity
             + self.volume_confirmation
             + self.technical_setup
         )
+        # Cap total between 0 and 100
+        return max(0.0, min(100.0, base + self.alternative_signals))
 
 
 @dataclass
@@ -186,6 +192,7 @@ class ConvictionScorer:
         self,
         timeframe_signals: TimeframeSignals,
         market_context: MarketContext,
+        alternative_signals: AlternativeSignals | None = None,
     ) -> ConvictionResult:
         """
         Calculate conviction score and determine position tier.
@@ -193,6 +200,7 @@ class ConvictionScorer:
         Args:
             timeframe_signals: Signals from Daily/4H/1H timeframes
             market_context: Current market conditions
+            alternative_signals: Optional Simons-inspired alternative data signals
 
         Returns:
             ConvictionResult with score, tier, and sizing parameters
@@ -207,12 +215,18 @@ class ConvictionScorer:
         volume_score = self._score_volume_confirmation(market_context.volume_ratio)
         technical_score = self._score_technical_setup(market_context)
 
+        # Calculate alternative signal boost/penalty (Simons-inspired)
+        alt_score = self._score_alternative_signals(
+            alternative_signals, timeframe_signals
+        ) if alternative_signals else 0.0
+
         breakdown = ConvictionBreakdown(
             timeframe_alignment=tf_score,
             ensemble_confidence=ensemble_score,
             regime_clarity=regime_score,
             volume_confirmation=volume_score,
             technical_setup=technical_score,
+            alternative_signals=alt_score,
         )
 
         total_score = breakdown.total
@@ -236,10 +250,11 @@ class ConvictionScorer:
             reason=reason,
         )
 
+        alt_str = f" ALT:{alt_score:+.0f}" if alt_score != 0 else ""
         logger.info(
             f"Conviction: {total_score:.1f} ({tier.value}) | "
             f"Signal: {signal} | TF:{tf_score:.0f} EN:{ensemble_score:.0f} "
-            f"RG:{regime_score:.0f} VL:{volume_score:.0f} TC:{technical_score:.0f}"
+            f"RG:{regime_score:.0f} VL:{volume_score:.0f} TC:{technical_score:.0f}{alt_str}"
         )
 
         return result
@@ -474,3 +489,75 @@ class ConvictionScorer:
             strengths.append("volume confirmed")
 
         return f"{signal} ({tier.value}): {', '.join(strengths) or 'threshold met'}"
+
+    def _score_alternative_signals(
+        self,
+        alt_signals: AlternativeSignals,
+        tf_signals: TimeframeSignals,
+    ) -> float:
+        """
+        Score alternative data signals (Simons-inspired).
+
+        This adds -10 to +10 points based on alternative data alignment.
+        Positive = alt signals agree with trade direction
+        Negative = alt signals disagree with trade direction
+
+        Args:
+            alt_signals: Alternative data signals (funding, OI, L/S ratio)
+            tf_signals: Current timeframe signals for direction check
+
+        Returns:
+            Score adjustment (-10 to +10)
+        """
+        if alt_signals.signal_count == 0:
+            return 0.0
+
+        # Determine intended direction from timeframe signals
+        intended_long = tf_signals.four_hour_signal == "LONG"
+        intended_short = tf_signals.four_hour_signal == "SHORT"
+
+        if not (intended_long or intended_short):
+            # No clear direction, no adjustment
+            return 0.0
+
+        # Combined signal ranges from -1 (bearish) to +1 (bullish)
+        combined = alt_signals.combined_signal
+
+        score = 0.0
+
+        # Check if alternative signals align with intended direction
+        if intended_long:
+            # Bullish alt signals support long trades
+            if combined > 0.3:
+                score = min(10.0, combined * 15)  # Up to +10
+            elif combined < -0.3:
+                score = max(-10.0, combined * 15)  # Down to -10
+            else:
+                score = combined * 5  # Smaller adjustment for mild signals
+        elif intended_short:
+            # Bearish alt signals support short trades
+            if combined < -0.3:
+                score = min(10.0, abs(combined) * 15)  # Up to +10
+            elif combined > 0.3:
+                score = max(-10.0, -combined * 15)  # Down to -10
+            else:
+                score = -combined * 5  # Smaller adjustment for mild signals
+
+        # Bonus for extreme signals (high confidence alternative data)
+        if alt_signals.funding_extreme:
+            # Extreme funding is a strong signal
+            if (intended_long and alt_signals.funding_signal > 0) or \
+               (intended_short and alt_signals.funding_signal < 0):
+                score += 3.0
+            else:
+                score -= 3.0
+
+        if alt_signals.crowd_extreme:
+            # Crowd extreme is a contrarian signal
+            if (intended_long and alt_signals.ls_ratio_signal > 0) or \
+               (intended_short and alt_signals.ls_ratio_signal < 0):
+                score += 2.0
+            else:
+                score -= 2.0
+
+        return max(-10.0, min(10.0, score))

@@ -7,12 +7,11 @@ Implements quality gates, circuit breaker, and fallback provider.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum
 from typing import Any
 

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 import numpy as np
@@ -65,7 +65,7 @@ class MTFSignal:
     entry_ready: bool
 
     # Timestamps
-    generated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    generated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 class MultiTimeframeEngine:
@@ -352,10 +352,10 @@ class MultiTimeframeEngine:
 
         # WAIT for pullback
         if distance > 1.0:
-            return "WAIT", f"Wait for pullback to EMA21", ema_21 * 1.003
+            return "WAIT", "Wait for pullback to EMA21", ema_21 * 1.003
 
         if distance < -1.0:
-            return "WAIT", f"Wait for pullback to EMA21", ema_21 * 0.997
+            return "WAIT", "Wait for pullback to EMA21", ema_21 * 0.997
 
         # Default: NOW if momentum aligns
         if momentum in ("BULLISH", "BEARISH"):

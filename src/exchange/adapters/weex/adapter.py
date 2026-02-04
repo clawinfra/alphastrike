@@ -2,7 +2,6 @@
 WEEX Exchange Adapter
 
 Implements ExchangeAdapter protocol for WEEX CEX.
-Refactored from src/data/rest_client.py for unified exchange abstraction.
 """
 
 from __future__ import annotations
@@ -14,8 +13,9 @@ import hmac
 import json
 import logging
 import time
+from collections.abc import Mapping
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import aiohttp
 
@@ -45,9 +45,6 @@ from src.exchange.models import (
     UnifiedTrade,
 )
 from src.exchange.protocols import ExchangeAdapter, ExchangeRESTProtocol, ExchangeWebSocketProtocol
-
-if TYPE_CHECKING:
-    from src.exchange.adapters.weex.websocket import WEEXWebSocket
 
 logger = logging.getLogger(__name__)
 
@@ -199,13 +196,9 @@ class WEEXRESTClient(ExchangeRESTProtocol):
 
         if self._session is None:
             raise ExchangeError("Session not initialized", exchange=self.exchange_name)
-        session = self._session
 
         url = f"{self.base_url}{path}"
-        body = ""
-
-        if data:
-            body = json.dumps(data)
+        body = json.dumps(data) if data else ""
 
         headers = {}
         if authenticated:
@@ -218,60 +211,18 @@ class WEEXRESTClient(ExchangeRESTProtocol):
         for attempt in range(self._max_retries):
             try:
                 async with self._request_lock:
-                    # Check rate limit
-                    if self._rate_limit_remaining <= 0:
-                        wait_time = max(0, self._rate_limit_reset - time.time())
-                        if wait_time > 0:
-                            logger.warning(f"Rate limited, waiting {wait_time:.1f}s")
-                            await asyncio.sleep(wait_time)
+                    await self._wait_for_rate_limit()
 
-                    async with session.request(
+                    async with self._session.request(
                         method,
                         url,
                         params=params,
-                        data=body if body else None,
+                        data=body or None,
                         headers=headers,
                     ) as response:
-                        # Update rate limit tracking
-                        if "X-RateLimit-Remaining" in response.headers:
-                            self._rate_limit_remaining = int(
-                                response.headers["X-RateLimit-Remaining"]
-                            )
-                        if "X-RateLimit-Reset" in response.headers:
-                            self._rate_limit_reset = float(response.headers["X-RateLimit-Reset"])
-
+                        self._update_rate_limit_from_headers(response.headers)
                         response_text = await response.text()
-
-                        if response.status == 429:
-                            raise RateLimitError(
-                                "Rate limit exceeded",
-                                exchange="weex",
-                            )
-
-                        if response.status == 401:
-                            raise AuthenticationError(
-                                "Invalid API credentials",
-                                exchange="weex",
-                            )
-
-                        if response.status >= 400:
-                            logger.error(f"API error: {response.status} - {response_text}")
-                            raise ExchangeError(
-                                f"API error {response.status}: {response_text}",
-                                exchange="weex",
-                            )
-
-                        result = json.loads(response_text)
-
-                        # WEEX wraps responses in {"code": "00000", "data": {...}}
-                        if isinstance(result, dict):
-                            if result.get("code") != "00000":
-                                error_msg = result.get("msg", "Unknown error")
-                                error_code = result.get("code", "")
-                                self._handle_error_code(error_code, error_msg)
-                            return result.get("data", result)
-
-                        return result
+                        return self._process_response(response.status, response_text)
 
             except (TimeoutError, aiohttp.ClientError) as e:
                 delay = min(self._base_delay * (2**attempt), self._max_delay)
@@ -296,21 +247,64 @@ class WEEXRESTClient(ExchangeRESTProtocol):
 
         raise ExchangeError("Request failed: max retries exceeded", exchange="weex")
 
+    async def _wait_for_rate_limit(self) -> None:
+        """Wait if rate limited."""
+        if self._rate_limit_remaining <= 0:
+            wait_time = max(0, self._rate_limit_reset - time.time())
+            if wait_time > 0:
+                logger.warning(f"Rate limited, waiting {wait_time:.1f}s")
+                await asyncio.sleep(wait_time)
+
+    def _update_rate_limit_from_headers(self, headers: Mapping[str, str]) -> None:
+        """Update rate limit tracking from response headers."""
+        if "X-RateLimit-Remaining" in headers:
+            self._rate_limit_remaining = int(headers["X-RateLimit-Remaining"])
+        if "X-RateLimit-Reset" in headers:
+            self._rate_limit_reset = float(headers["X-RateLimit-Reset"])
+
+    def _process_response(self, status: int, response_text: str) -> dict:
+        """Process HTTP response and handle errors."""
+        if status == 429:
+            raise RateLimitError("Rate limit exceeded", exchange="weex")
+
+        if status == 401:
+            raise AuthenticationError("Invalid API credentials", exchange="weex")
+
+        if status >= 400:
+            logger.error(f"API error: {status} - {response_text}")
+            raise ExchangeError(f"API error {status}: {response_text}", exchange="weex")
+
+        result = json.loads(response_text)
+
+        # WEEX wraps responses in {"code": "00000", "data": {...}}
+        if isinstance(result, dict):
+            if result.get("code") != "00000":
+                error_msg = result.get("msg", "Unknown error")
+                error_code = result.get("code", "")
+                self._handle_error_code(error_code, error_msg)
+            return result.get("data", result)
+
+        return result
+
     def _handle_error_code(self, code: str, message: str) -> None:
         """Translate WEEX error codes to appropriate exceptions."""
-        # Map common WEEX error codes
-        if code in ("40001", "40002", "40003"):
+        auth_codes = ("40001", "40002", "40003")
+        rate_limit_codes = ("40007", "40008")
+        balance_codes = ("40009", "40010")
+        order_codes = ("40011", "40012", "40013")
+
+        if code in auth_codes:
             raise AuthenticationError(message, exchange="weex", code=code)
-        elif code in ("40007", "40008"):
+        if code in rate_limit_codes:
             raise RateLimitError(message, exchange="weex")
-        elif code in ("40009", "40010"):
+        if code in balance_codes:
             raise InsufficientBalanceError(message, exchange="weex", code=code)
-        elif code in ("40011", "40012", "40013"):
+        if code in order_codes:
             raise InvalidOrderError(message, exchange="weex", code=code)
-        elif code == "40014":
+        if code == "40014":
             raise OrderNotFoundError(message, exchange="weex", code=code)
-        else:
-            raise ExchangeError(message, exchange="weex", code=code)
+
+        raise ExchangeError(message, exchange="weex", code=code)
 
     # ==================== Market Data ====================
 
@@ -365,12 +359,10 @@ class WEEXRESTClient(ExchangeRESTProtocol):
 
         data = await self._request("GET", path, params=params, authenticated=False)
 
-        candles = []
-        if isinstance(data, list):
-            for candle_data in data:
-                candles.append(WEEXMapper.to_unified_candle(candle_data, symbol, interval))
+        if not isinstance(data, list):
+            return []
 
-        return candles
+        return [WEEXMapper.to_unified_candle(candle_data, symbol, interval) for candle_data in data]
 
     async def get_recent_trades(
         self,
@@ -387,12 +379,10 @@ class WEEXRESTClient(ExchangeRESTProtocol):
 
         data = await self._request("GET", path, params=params, authenticated=False)
 
-        trades = []
-        if isinstance(data, list):
-            for trade_data in data:
-                trades.append(WEEXMapper.to_unified_trade(trade_data, symbol))
+        if not isinstance(data, list):
+            return []
 
-        return trades
+        return [WEEXMapper.to_unified_trade(trade_data, symbol) for trade_data in data]
 
     async def get_funding_rate(self, symbol: str) -> float:
         """Get current funding rate for perpetual futures."""
@@ -434,12 +424,14 @@ class WEEXRESTClient(ExchangeRESTProtocol):
 
         data = await self._request("GET", path, params=params, authenticated=False)
 
+        if not isinstance(data, list):
+            return []
+
         symbols = []
-        if isinstance(data, list):
-            for contract in data:
-                info = WEEXMapper.to_symbol_info(contract)
-                self._symbol_cache[info.symbol] = info
-                symbols.append(info)
+        for contract in data:
+            info = WEEXMapper.to_symbol_info(contract)
+            self._symbol_cache[info.symbol] = info
+            symbols.append(info)
 
         return symbols
 
@@ -478,13 +470,14 @@ class WEEXRESTClient(ExchangeRESTProtocol):
 
         data = await self._request("GET", path, params=params)
 
-        positions = []
-        if isinstance(data, list):
-            for pos in data:
-                if float(pos.get("total", 0)) > 0:
-                    positions.append(WEEXMapper.to_unified_position(pos))
+        if not isinstance(data, list):
+            return []
 
-        return positions
+        return [
+            WEEXMapper.to_unified_position(pos)
+            for pos in data
+            if float(pos.get("total", 0)) > 0
+        ]
 
     async def get_position(
         self,
@@ -570,12 +563,10 @@ class WEEXRESTClient(ExchangeRESTProtocol):
 
         data = await self._request("GET", path, params=params)
 
-        orders = []
-        if isinstance(data, list):
-            for order_data in data:
-                orders.append(WEEXMapper.to_unified_order_result(order_data))
+        if not isinstance(data, list):
+            return []
 
-        return orders
+        return [WEEXMapper.to_unified_order_result(order_data) for order_data in data]
 
     # ==================== Leverage Operations ====================
 
@@ -741,6 +732,8 @@ class WEEXAdapter(ExchangeAdapter):
             rest_url: REST API URL (uses config if None)
             ws_url: WebSocket URL (uses config if None)
         """
+        from src.exchange.adapters.weex.websocket import WEEXWebSocket
+
         self._rest = WEEXRESTClient(
             api_key=api_key,
             api_secret=api_secret,
@@ -748,10 +741,7 @@ class WEEXAdapter(ExchangeAdapter):
             base_url=rest_url,
         )
 
-        # Lazy import to avoid circular imports
-        from src.exchange.adapters.weex.websocket import WEEXWebSocket
-
-        self._websocket: WEEXWebSocket = WEEXWebSocket(
+        self._websocket = WEEXWebSocket(
             ws_url=ws_url,
             api_key=api_key,
             api_secret=api_secret,

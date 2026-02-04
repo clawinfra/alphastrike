@@ -330,7 +330,7 @@ class RESTClient:
 
                         return result
 
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            except (TimeoutError, aiohttp.ClientError) as e:
                 delay = min(self._base_delay * (2 ** attempt), self._max_delay)
                 logger.warning(
                     f"Request failed (attempt {attempt + 1}/{self._max_retries}): {e}, "

@@ -13,7 +13,6 @@ from datetime import datetime
 from enum import Enum
 from typing import Literal
 
-from src.core.config import MarketRegime
 from src.risk.portfolio import Position
 
 logger = logging.getLogger(__name__)

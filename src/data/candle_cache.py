@@ -7,9 +7,9 @@ Supports incremental updates - only fetches new data not already cached.
 
 import json
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Optional
+
 import aiohttp
 
 logger = logging.getLogger(__name__)
@@ -33,12 +33,12 @@ def load_cached_candles(symbol: str, interval: str) -> list[dict]:
         return []
 
     try:
-        with open(cache_path, "r") as f:
+        with open(cache_path) as f:
             data = json.load(f)
             candles = data.get("candles", [])
             logger.info(f"Loaded {len(candles)} cached candles for {symbol} {interval}")
             return candles
-    except (json.JSONDecodeError, IOError) as e:
+    except (OSError, json.JSONDecodeError) as e:
         logger.warning(f"Failed to load cache for {symbol}: {e}")
         return []
 
@@ -58,7 +58,7 @@ def save_cached_candles(symbol: str, interval: str, candles: list[dict]) -> None
     data = {
         "symbol": symbol,
         "interval": interval,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
         "count": len(unique_candles),
         "candles": unique_candles,
     }
@@ -74,7 +74,7 @@ async def fetch_candles_batch(
     symbol: str,
     interval: str,
     limit: int = 1000,
-    end_time: Optional[int] = None,
+    end_time: int | None = None,
 ) -> list[dict]:
     """Fetch a single batch of candles from WEEX API."""
     weex_symbol = f"cmt_{symbol.lower()}"
@@ -160,7 +160,7 @@ async def fetch_candles_with_cache(
         newest_cached = max(c["timestamp"] for c in cached)
 
         # Calculate how far back we need to go
-        target_start = datetime.now(timezone.utc) - timedelta(days=days)
+        target_start = datetime.now(UTC) - timedelta(days=days)
         target_start_ms = int(target_start.timestamp() * 1000)
 
         # Check if we have enough historical data
@@ -302,7 +302,7 @@ def get_cache_info(symbol: str, interval: str) -> dict:
         return {"cached": False, "count": 0}
 
     try:
-        with open(cache_path, "r") as f:
+        with open(cache_path) as f:
             data = json.load(f)
             candles = data.get("candles", [])
 
@@ -315,15 +315,15 @@ def get_cache_info(symbol: str, interval: str) -> dict:
             return {
                 "cached": True,
                 "count": len(candles),
-                "oldest": datetime.fromtimestamp(oldest / 1000, tz=timezone.utc),
-                "newest": datetime.fromtimestamp(newest / 1000, tz=timezone.utc),
+                "oldest": datetime.fromtimestamp(oldest / 1000, tz=UTC),
+                "newest": datetime.fromtimestamp(newest / 1000, tz=UTC),
                 "updated_at": data.get("updated_at"),
             }
     except Exception as e:
         return {"cached": False, "error": str(e)}
 
 
-def clear_cache(symbol: Optional[str] = None, interval: Optional[str] = None) -> None:
+def clear_cache(symbol: str | None = None, interval: str | None = None) -> None:
     """Clear cached data."""
     if symbol and interval:
         cache_path = get_cache_path(symbol, interval)

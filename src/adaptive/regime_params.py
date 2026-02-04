@@ -16,10 +16,9 @@ Key Insight: Different regimes require different trading behavior:
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
-from src.core.config import MarketRegime
 from src.adaptive.asset_config import AdaptiveAssetConfig
+from src.core.config import MarketRegime
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +166,7 @@ class RegimeAwareParams:
 
     def __init__(
         self,
-        custom_adjustments: Optional[dict[MarketRegime, RegimeAdjustment]] = None,
+        custom_adjustments: dict[MarketRegime, RegimeAdjustment] | None = None,
         confidence_scaling: bool = True,
         min_confidence_for_adjustment: float = 0.5,
     ):
@@ -340,7 +339,7 @@ class RegimeAwareParams:
 
 def create_symbol_specific_adjustments(
     symbol: str,
-    base_adjustments: Optional[dict[MarketRegime, RegimeAdjustment]] = None,
+    base_adjustments: dict[MarketRegime, RegimeAdjustment] | None = None,
 ) -> dict[MarketRegime, RegimeAdjustment]:
     """
     Create symbol-specific regime adjustments.

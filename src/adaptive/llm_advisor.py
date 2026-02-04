@@ -9,9 +9,10 @@ import json
 import logging
 import os
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 
@@ -224,9 +225,9 @@ class AdvisorDecision:
     tool_name: str
     parameters: dict[str, Any]
     reasoning: str
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     executed: bool = False
-    result: Optional[str] = None
+    result: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -276,8 +277,8 @@ Respond with ONE JSON object per asset that needs action. If asset is fine, use 
 
     def __init__(
         self,
-        config: Optional[OllamaConfig] = None,
-        configs: Optional[dict[str, AdaptiveAssetConfig]] = None,
+        config: OllamaConfig | None = None,
+        configs: dict[str, AdaptiveAssetConfig] | None = None,
     ):
         self.config = config or OllamaConfig()
         self.asset_configs = configs or {}
@@ -343,7 +344,7 @@ Respond with ONE JSON object per asset that needs action. If asset is fine, use 
             if symbol in self.asset_configs:
                 cfg = self.asset_configs[symbol]
                 lines.extend([
-                    f"  Current Config:",
+                    "  Current Config:",
                     f"    - Conviction Threshold: {cfg.conviction_threshold}",
                     f"    - Stop ATR Mult: {cfg.stop_atr_multiplier}",
                     f"    - Position Size Mult: {cfg.position_size_multiplier}",
@@ -560,7 +561,7 @@ async def handle_adjust_stops(
     stop_atr_mult: float,
     reason: str,
     configs: dict[str, AdaptiveAssetConfig],
-    tp_atr_mult: Optional[float] = None,
+    tp_atr_mult: float | None = None,
 ) -> str:
     """Handle stop/TP adjustment."""
     if symbol not in configs:

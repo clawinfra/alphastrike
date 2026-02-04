@@ -376,7 +376,7 @@ class AILogger:
         await db.save_ai_log(log_entry)
 
         logger.info(
-            f"AI explanation saved to database",
+            "AI explanation saved to database",
             extra={"order_id": explanation.order_id},
         )
 

@@ -7,13 +7,12 @@ Core backtesting engine that orchestrates signal generation and simulated execut
 from __future__ import annotations
 
 import logging
-import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal
 
 from src.backtest.metrics import BacktestMetrics, MetricsCalculator
-from src.backtest.simulator import ExecutionSimulator, SimulatedFill
+from src.backtest.simulator import ExecutionSimulator
 from src.data.database import Candle
 from src.exchange.models import UnifiedCandle
 

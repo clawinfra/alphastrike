@@ -115,12 +115,19 @@ class ExchangeFactory:
         settings = get_settings()
 
         # Use configured exchange if not specified
+        name: str
         if exchange_name is None:
-            exchange_name = getattr(settings.exchange, "name", "weex")
-            if hasattr(exchange_name, "value"):
-                exchange_name = exchange_name.value
+            configured = getattr(settings.exchange, "name", None)
+            if configured is not None and hasattr(configured, "value"):
+                name = configured.value
+            elif configured is not None:
+                name = str(configured)
+            else:
+                name = "weex"
+        else:
+            name = exchange_name
 
-        exchange_name = exchange_name.lower()
+        exchange_name = name.lower()
 
         # Ensure adapters are registered
         self._ensure_adapters_registered()
@@ -169,6 +176,11 @@ class ExchangeFactory:
                 from src.exchange.adapters import weex  # noqa: F401
             except ImportError as e:
                 logger.warning(f"Failed to import weex adapter: {e}")
+
+            try:
+                from src.exchange.adapters import hyperliquid  # noqa: F401
+            except ImportError as e:
+                logger.warning(f"Failed to import hyperliquid adapter: {e}")
 
     async def close_all(self) -> None:
         """Close all active adapters."""

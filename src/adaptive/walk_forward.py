@@ -13,9 +13,11 @@ Key Concepts:
 """
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Literal, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal
+
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -158,7 +160,7 @@ class WalkForwardValidator:
     def run(
         self,
         symbol: str,
-        end_date: Optional[datetime] = None,
+        end_date: datetime | None = None,
     ) -> WalkForwardResult:
         """
         Run complete walk-forward analysis.
@@ -171,7 +173,7 @@ class WalkForwardValidator:
             WalkForwardResult with all windows and validation status
         """
         if end_date is None:
-            end_date = datetime.now(timezone.utc)
+            end_date = datetime.now(UTC)
 
         # Generate window dates
         windows = self._generate_windows(end_date)

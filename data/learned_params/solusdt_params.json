@@ -1,27 +1,20 @@
 {
   "config": {
-    "conviction_threshold": 78,
-    "stop_atr_multiplier": 3.0,
-    "take_profit_atr_multiplier": 3.0,
-    "position_size_multiplier": 1.0,
+    "conviction_threshold": 55,
+    "stop_atr_multiplier": 2.0,
+    "take_profit_atr_multiplier": 2.5,
+    "position_size_multiplier": 1.25,
     "short_conviction_penalty": 0,
-    "short_enabled": false,
     "require_daily_trend_for_short": false
   },
-  "symbol": "SOLUSDT",
-  "optimized_at": "2026-02-01T21:03:17.134668+00:00",
-  "strategy": "Trade Big, Trade Less, Trade with Confidence",
-  "backtest_30d": {
-    "pnl_usd": 338.58,
-    "pnl_pct": 3.39,
-    "trades": 4,
-    "win_rate": 0.75
+  "thresholds": {
+    "win_rate_low": 0.4,
+    "win_rate_high": 0.6,
+    "consecutive_losses": 3,
+    "catastrophic_r": -2.0,
+    "large_loss_r": -1.5,
+    "stop_loss_rate": 0.5,
+    "small_win_r": 1.0
   },
-  "portfolio_result": {
-    "total_pnl": 232.14,
-    "return_pct": 0.77,
-    "annualized_pct": 9.8,
-    "total_trades": 5,
-    "overall_win_rate": 0.6
-  }
+  "symbol": "SOLUSDT"
 }

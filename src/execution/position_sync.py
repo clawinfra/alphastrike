@@ -19,7 +19,6 @@ from src.data.rest_client import (
     PositionSide,
     RESTClient,
     RESTClientError,
-    get_rest_client,
 )
 from src.data.rest_client import Position as ExchangePosition
 from src.risk.portfolio import PortfolioManager, Position

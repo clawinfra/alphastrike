@@ -12,12 +12,13 @@ Key Design Decisions:
 4. Symbol-specific - Each asset optimized independently
 """
 
-import logging
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Callable, Optional
 import json
+import logging
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
 try:
     import optuna
@@ -28,7 +29,7 @@ except ImportError:
 
 import numpy as np
 
-from src.adaptive.asset_config import AdaptiveAssetConfig, save_asset_config
+from src.adaptive.asset_config import AdaptiveAssetConfig
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ class OptimizationResult:
     optimization_time_seconds: float = 0.0
 
     # Metadata
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     trigger_reason: str = ""
 
     def to_dict(self) -> dict:
@@ -118,10 +119,10 @@ class ParameterOptimizer:
         self,
         backtest_func: Callable[[str, dict], dict],
         n_trials: int = 50,
-        timeout_seconds: Optional[int] = 300,
+        timeout_seconds: int | None = 300,
         min_sharpe_threshold: float = 0.5,
         min_out_of_sample_ratio: float = 0.7,
-        results_dir: Optional[Path] = None,
+        results_dir: Path | None = None,
     ):
         """
         Initialize optimizer.
@@ -155,7 +156,7 @@ class ParameterOptimizer:
         self,
         symbol: str,
         trigger_reason: str = "manual",
-        current_config: Optional[AdaptiveAssetConfig] = None,
+        current_config: AdaptiveAssetConfig | None = None,
         warm_start: bool = True,
     ) -> OptimizationResult:
         """

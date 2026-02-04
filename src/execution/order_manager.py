@@ -32,6 +32,7 @@ from src.exchange.models import (
     PositionSide,
     TimeInForce,
     UnifiedOrder,
+    UnifiedOrderbook,
     UnifiedOrderResult,
 )
 from src.exchange.protocols import ExchangeRESTProtocol
@@ -285,7 +286,7 @@ class OrderManager:
         self,
         symbol: str,
         size: float,
-        orderbook: "UnifiedOrderbook | None" = None,
+        orderbook: UnifiedOrderbook | None = None,
     ) -> float:
         """
         Estimate expected slippage for an order.
@@ -301,7 +302,6 @@ class OrderManager:
         Returns:
             Estimated slippage as decimal (0.001 = 0.1%).
         """
-        from src.exchange.models import UnifiedOrderbook
 
         # Base slippage in decimal
         base_slippage = self.BASE_SLIPPAGE_BPS / 10000
@@ -505,7 +505,7 @@ class OrderManager:
 
     def _calculate_book_depth(
         self,
-        orderbook: "UnifiedOrderbook",
+        orderbook: UnifiedOrderbook,
     ) -> float:
         """
         Calculate total orderbook depth in USDT.
@@ -516,7 +516,6 @@ class OrderManager:
         Returns:
             Total book depth in USDT notional value.
         """
-        from src.exchange.models import UnifiedOrderbook
 
         total_depth = 0.0
 

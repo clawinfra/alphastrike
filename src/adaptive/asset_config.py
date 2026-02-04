@@ -5,11 +5,11 @@ Each trading pair maintains its own optimized parameters that can be
 tuned independently based on rolling performance metrics.
 """
 
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
+
 import yaml
-from datetime import datetime, timezone
 
 
 @dataclass
@@ -54,14 +54,14 @@ class AdaptiveAssetConfig:
     rolling_window_days: int = 30  # Performance evaluation window
 
     # === Metadata ===
-    last_tuned: Optional[str] = None  # ISO timestamp
+    last_tuned: str | None = None  # ISO timestamp
     tune_count: int = 0
-    created_at: Optional[str] = None
+    created_at: str | None = None
     notes: str = ""
 
     def __post_init__(self):
         if self.created_at is None:
-            self.created_at = datetime.now(timezone.utc).isoformat()
+            self.created_at = datetime.now(UTC).isoformat()
 
     def to_dict(self) -> dict:
         """Convert to dictionary for serialization."""
@@ -74,11 +74,11 @@ class AdaptiveAssetConfig:
 
     def mark_tuned(self) -> None:
         """Update metadata after tuning."""
-        self.last_tuned = datetime.now(timezone.utc).isoformat()
+        self.last_tuned = datetime.now(UTC).isoformat()
         self.tune_count += 1
 
 
-def get_config_path(symbol: str, config_dir: Optional[Path] = None) -> Path:
+def get_config_path(symbol: str, config_dir: Path | None = None) -> Path:
     """Get path to config file for a symbol."""
     if config_dir is None:
         config_dir = Path(__file__).parent.parent.parent / "configs" / "assets"
@@ -86,7 +86,7 @@ def get_config_path(symbol: str, config_dir: Optional[Path] = None) -> Path:
     return config_dir / f"{symbol.lower()}.yaml"
 
 
-def load_asset_config(symbol: str, config_dir: Optional[Path] = None) -> AdaptiveAssetConfig:
+def load_asset_config(symbol: str, config_dir: Path | None = None) -> AdaptiveAssetConfig:
     """
     Load asset config from YAML file, or create default if not exists.
 
@@ -100,7 +100,7 @@ def load_asset_config(symbol: str, config_dir: Optional[Path] = None) -> Adaptiv
     config_path = get_config_path(symbol, config_dir)
 
     if config_path.exists():
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             data = yaml.safe_load(f)
             return AdaptiveAssetConfig.from_dict(data)
 
@@ -110,7 +110,7 @@ def load_asset_config(symbol: str, config_dir: Optional[Path] = None) -> Adaptiv
     return config
 
 
-def save_asset_config(config: AdaptiveAssetConfig, config_dir: Optional[Path] = None) -> Path:
+def save_asset_config(config: AdaptiveAssetConfig, config_dir: Path | None = None) -> Path:
     """
     Save asset config to YAML file.
 
@@ -129,7 +129,7 @@ def save_asset_config(config: AdaptiveAssetConfig, config_dir: Optional[Path] = 
     return config_path
 
 
-def load_all_asset_configs(config_dir: Optional[Path] = None) -> dict[str, AdaptiveAssetConfig]:
+def load_all_asset_configs(config_dir: Path | None = None) -> dict[str, AdaptiveAssetConfig]:
     """
     Load all asset configs from the config directory.
 
@@ -175,7 +175,7 @@ DEFAULT_CONFIGS = {
 }
 
 
-def initialize_default_configs(config_dir: Optional[Path] = None) -> None:
+def initialize_default_configs(config_dir: Path | None = None) -> None:
     """Create default config files for major pairs if they don't exist."""
     for symbol, config in DEFAULT_CONFIGS.items():
         config_path = get_config_path(symbol, config_dir)

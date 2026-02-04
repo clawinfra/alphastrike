@@ -8,9 +8,9 @@ Supports fetching months/years of historical data.
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Optional
+
 import aiohttp
 
 logger = logging.getLogger(__name__)
@@ -54,8 +54,8 @@ async def fetch_binance_candles_batch(
     session: aiohttp.ClientSession,
     symbol: str,
     interval: str,
-    start_time: Optional[int] = None,
-    end_time: Optional[int] = None,
+    start_time: int | None = None,
+    end_time: int | None = None,
     limit: int = 1000,
     use_futures: bool = True,
 ) -> list[dict]:
@@ -146,7 +146,7 @@ async def fetch_binance_candles(
     batch_size = 1000
 
     # Calculate time range
-    end_time = int(datetime.now(timezone.utc).timestamp() * 1000)
+    end_time = int(datetime.now(UTC).timestamp() * 1000)
     start_time = end_time - (days * 24 * 60 * 60 * 1000)
 
     current_start = start_time
@@ -227,17 +227,17 @@ async def fetch_binance_with_cache(
     cached_candles = []
     if not force_refresh and cache_path.exists():
         try:
-            with open(cache_path, "r") as f:
+            with open(cache_path) as f:
                 data = json.load(f)
                 cached_candles = data.get("candles", [])
                 logger.info(f"Loaded {len(cached_candles)} cached Binance candles for {symbol}")
-        except (json.JSONDecodeError, IOError) as e:
+        except (OSError, json.JSONDecodeError) as e:
             logger.warning(f"Failed to load cache: {e}")
 
     if cached_candles:
         # Check if we have enough history
         oldest_cached = min(c["timestamp"] for c in cached_candles)
-        target_start = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp() * 1000)
+        target_start = int((datetime.now(UTC) - timedelta(days=days)).timestamp() * 1000)
 
         if oldest_cached <= target_start:
             # Cache has enough history, just fetch new candles
@@ -255,7 +255,7 @@ async def fetch_binance_with_cache(
             return sorted(cached_candles, key=lambda x: x["timestamp"])
 
         # Need to fetch older data
-        logger.info(f"Cache missing older data, fetching from Binance...")
+        logger.info("Cache missing older data, fetching from Binance...")
 
     # Fetch all data
     all_candles = await fetch_binance_candles(
@@ -290,7 +290,7 @@ def _save_cache(cache_path: Path, symbol: str, interval: str, candles: list[dict
         "symbol": symbol,
         "interval": interval,
         "source": "binance",
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
         "count": len(unique),
         "candles": unique,
     }
@@ -309,7 +309,7 @@ def get_binance_cache_info(symbol: str, interval: str) -> dict:
         return {"cached": False, "count": 0, "source": "binance"}
 
     try:
-        with open(cache_path, "r") as f:
+        with open(cache_path) as f:
             data = json.load(f)
             candles = data.get("candles", [])
 
@@ -323,8 +323,8 @@ def get_binance_cache_info(symbol: str, interval: str) -> dict:
                 "cached": True,
                 "count": len(candles),
                 "source": "binance",
-                "oldest": datetime.fromtimestamp(oldest / 1000, tz=timezone.utc),
-                "newest": datetime.fromtimestamp(newest / 1000, tz=timezone.utc),
+                "oldest": datetime.fromtimestamp(oldest / 1000, tz=UTC),
+                "newest": datetime.fromtimestamp(newest / 1000, tz=UTC),
                 "updated_at": data.get("updated_at"),
                 "days_of_data": (newest - oldest) / (24 * 60 * 60 * 1000),
             }

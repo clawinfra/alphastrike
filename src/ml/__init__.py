@@ -13,8 +13,8 @@ from src.ml.lstm_model import TrainingResult as LSTMTrainingResult
 from src.ml.random_forest_model import RandomForestConfig, RandomForestModel
 from src.ml.random_forest_model import TrainingResult as RFTrainingResult
 from src.ml.trainer import ModelTrainer, TrainingReport
-from src.ml.xgboost_model import XGBoostConfig, XGBoostModel
 from src.ml.xgboost_model import TrainingResult as XGBoostTrainingResult
+from src.ml.xgboost_model import XGBoostConfig, XGBoostModel
 
 __all__ = [
     # Confidence Filter

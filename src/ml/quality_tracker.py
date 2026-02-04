@@ -22,8 +22,6 @@ from datetime import datetime
 from enum import Enum
 from typing import Literal
 
-import numpy as np
-
 logger = logging.getLogger(__name__)
 
 

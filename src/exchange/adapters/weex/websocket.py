@@ -2,7 +2,6 @@
 WEEX WebSocket Client
 
 Implements ExchangeWebSocketProtocol for real-time market data from WEEX.
-Refactored from src/data/websocket_client.py for unified exchange abstraction.
 """
 
 from __future__ import annotations
@@ -271,32 +270,16 @@ class WEEXWebSocket:
         if not self._ws:
             raise RuntimeError("Not connected")
 
-        # Convert unified symbol to WEEX format
         weex_symbol = WEEXMapper.to_weex_symbol(symbol)
-
-        args: list[dict[str, str]] = []
+        channel_name = channel
 
         if channel == "candle":
             weex_interval = WEEXMapper.to_weex_interval(interval or "1m")
-            args.append(
-                {
-                    "instType": "mc",
-                    "channel": f"candle{weex_interval}",
-                    "instId": weex_symbol,
-                }
-            )
-        else:
-            args.append(
-                {
-                    "instType": "mc",
-                    "channel": channel,
-                    "instId": weex_symbol,
-                }
-            )
+            channel_name = f"candle{weex_interval}"
 
         message = {
             "op": "subscribe",
-            "args": args,
+            "args": [{"instType": "mc", "channel": channel_name, "instId": weex_symbol}],
         }
 
         await self._ws.send(json.dumps(message))
@@ -313,29 +296,15 @@ class WEEXWebSocket:
             return
 
         weex_symbol = WEEXMapper.to_weex_symbol(symbol)
-        args: list[dict[str, str]] = []
+        channel_name = channel
 
         if channel == "candle":
             weex_interval = WEEXMapper.to_weex_interval(interval or "1m")
-            args.append(
-                {
-                    "instType": "mc",
-                    "channel": f"candle{weex_interval}",
-                    "instId": weex_symbol,
-                }
-            )
-        else:
-            args.append(
-                {
-                    "instType": "mc",
-                    "channel": channel,
-                    "instId": weex_symbol,
-                }
-            )
+            channel_name = f"candle{weex_interval}"
 
         message = {
             "op": "unsubscribe",
-            "args": args,
+            "args": [{"instType": "mc", "channel": channel_name, "instId": weex_symbol}],
         }
 
         await self._ws.send(json.dumps(message))
@@ -519,59 +488,73 @@ class WEEXWebSocket:
             logger.warning(f"Invalid JSON message: {message[:100]}")
             return
 
+        event = data.get("event")
+        op = data.get("op")
+
         # Handle pong
-        if data.get("op") == "pong" or data.get("event") == "pong":
+        if op == "pong" or event == "pong":
             self._last_pong = time.time()
             logger.debug("Received pong")
             return
 
         # Handle subscription confirmation
-        if data.get("event") == "subscribe":
+        if event == "subscribe":
             logger.debug(f"Subscription confirmed: {data.get('arg', {})}")
             return
 
         # Handle error
-        if data.get("event") == "error":
+        if event == "error":
             logger.error(f"WebSocket error: {data.get('msg', 'Unknown error')}")
             return
 
         # Handle data push
-        if "data" in data and "arg" in data:
-            arg = data["arg"]
-            channel = arg.get("channel", "")
-            weex_symbol = arg.get("instId", "")
-            push_data = data["data"]
+        if "data" not in data or "arg" not in data:
+            return
 
-            # Process based on channel type
-            if channel.startswith("candle"):
-                for item in push_data if isinstance(push_data, list) else [push_data]:
-                    # WEEX candles are arrays within arrays
-                    candle_data = item if isinstance(item, list) else item
-                    candle = self._parse_candle(candle_data, weex_symbol, channel)
-                    if candle:
-                        for callback in self._candle_callbacks:
-                            callback(candle)
+        arg = data["arg"]
+        channel = arg.get("channel", "")
+        weex_symbol = arg.get("instId", "")
+        push_data = data["data"]
 
-            elif channel == "ticker":
-                for item in push_data if isinstance(push_data, list) else [push_data]:
-                    ticker = self._parse_ticker(item, weex_symbol)
-                    if ticker:
-                        for callback in self._ticker_callbacks:
-                            callback(ticker)
+        # Normalize to list for consistent processing
+        items = push_data if isinstance(push_data, list) else [push_data]
 
-            elif channel.startswith("books"):
-                for item in push_data if isinstance(push_data, list) else [push_data]:
-                    orderbook = self._parse_orderbook(item, weex_symbol)
-                    if orderbook:
-                        for callback in self._orderbook_callbacks:
-                            callback(orderbook)
+        self._dispatch_channel_data(channel, weex_symbol, items)
 
-            elif channel == "trade":
-                for item in push_data if isinstance(push_data, list) else [push_data]:
-                    trade = self._parse_trade(item, weex_symbol)
-                    if trade:
-                        for callback in self._trade_callbacks:
-                            callback(trade)
+    def _dispatch_channel_data(
+        self,
+        channel: str,
+        weex_symbol: str,
+        items: list,
+    ) -> None:
+        """Dispatch data to appropriate callbacks based on channel type."""
+        if channel.startswith("candle"):
+            for item in items:
+                candle = self._parse_candle(item, weex_symbol, channel)
+                if candle:
+                    for callback in self._candle_callbacks:
+                        callback(candle)
+
+        elif channel == "ticker":
+            for item in items:
+                ticker = self._parse_ticker(item, weex_symbol)
+                if ticker:
+                    for callback in self._ticker_callbacks:
+                        callback(ticker)
+
+        elif channel.startswith("books"):
+            for item in items:
+                orderbook = self._parse_orderbook(item, weex_symbol)
+                if orderbook:
+                    for callback in self._orderbook_callbacks:
+                        callback(orderbook)
+
+        elif channel == "trade":
+            for item in items:
+                trade = self._parse_trade(item, weex_symbol)
+                if trade:
+                    for callback in self._trade_callbacks:
+                        callback(trade)
 
     # ==================== Event Loop ====================
 

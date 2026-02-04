@@ -292,7 +292,12 @@ class ExchangeConfig(BaseSettings):
     via the EXCHANGE_NAME environment variable.
     """
 
-    model_config = SettingsConfigDict(env_prefix="EXCHANGE_")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        env_prefix="EXCHANGE_",
+        extra="ignore",
+    )
 
     # Exchange selection
     name: ExchangeType = Field(
@@ -305,8 +310,9 @@ class ExchangeConfig(BaseSettings):
     api_secret: str = Field(default="", description="Exchange API secret")
     api_passphrase: str = Field(default="", description="API passphrase (WEEX, some CEXs)")
 
-    # DEX-specific credentials
+    # DEX-specific credentials (Hyperliquid, etc.)
     wallet_private_key: str = Field(default="", description="Wallet private key (for DEX)")
+    wallet_address: str = Field(default="", description="Wallet address (derived from key if empty)")
 
     # URLs (override defaults if needed)
     rest_url: str = Field(default="https://api.weex.com", description="REST API base URL")

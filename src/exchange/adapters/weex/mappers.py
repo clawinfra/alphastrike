@@ -241,15 +241,16 @@ class WEEXMapper:
         Returns:
             UnifiedOrderResult
         """
-        # Get symbol - try to get from response, fall back to original order
+        # Get symbol from response or fall back to original order
         weex_symbol = response.get("symbol", "")
-        symbol = (
-            WEEXMapper.from_weex_symbol(weex_symbol)
-            if weex_symbol
-            else (original_order.symbol if original_order else "")
-        )
+        if weex_symbol:
+            symbol = WEEXMapper.from_weex_symbol(weex_symbol)
+        elif original_order:
+            symbol = original_order.symbol
+        else:
+            symbol = ""
 
-        # Parse side
+        # Parse side from response or fall back to original order
         side_str = response.get("side", "")
         if side_str:
             side = WEEXMapper.from_weex_order_side(side_str)
@@ -258,7 +259,7 @@ class WEEXMapper:
         else:
             side = OrderSide.BUY
 
-        # Parse order type
+        # Parse order type from response or fall back to original order
         type_str = response.get("orderType", "")
         if type_str:
             order_type = WEEXMapper.from_weex_order_type(type_str)
@@ -267,19 +268,35 @@ class WEEXMapper:
         else:
             order_type = OrderType.MARKET
 
+        # Parse quantity
+        quantity = float(response.get("size", 0))
+        if quantity == 0 and original_order:
+            quantity = original_order.quantity
+
+        # Parse price
+        price_str = response.get("price")
+        if price_str:
+            price = float(price_str)
+        elif original_order:
+            price = original_order.price
+        else:
+            price = None
+
+        # Parse average price
+        avg_px_str = response.get("avgPx")
+        average_price = float(avg_px_str) if avg_px_str else None
+
         return UnifiedOrderResult(
             order_id=str(response.get("orderId", "")),
             client_order_id=response.get("clientOid"),
             symbol=symbol,
             side=side,
             order_type=order_type,
-            quantity=float(response.get("size", original_order.quantity if original_order else 0)),
-            price=float(response.get("price"))
-            if response.get("price")
-            else (original_order.price if original_order else None),
+            quantity=quantity,
+            price=price,
             status=WEEXMapper.from_weex_order_status(response.get("status", "submitted")),
             filled_quantity=float(response.get("filledQty", 0)),
-            average_price=float(response.get("avgPx")) if response.get("avgPx") else None,
+            average_price=average_price,
             commission=float(response.get("fee", 0)),
             commission_asset=response.get("feeCcy", "USDT"),
             timestamp=_utc_now(),
@@ -352,22 +369,27 @@ class WEEXMapper:
         Returns:
             UnifiedTicker
         """
-        last_price = float(ticker_data.get("last", ticker_data.get("lastPr", 0)))
-        open_price = float(ticker_data.get("open24h", 0))
-        price_change = last_price - open_price if open_price > 0 else 0
-        price_change_pct = (price_change / open_price * 100) if open_price > 0 else 0
+        last_price = float(ticker_data.get("last") or ticker_data.get("lastPr") or 0)
+        open_price = float(ticker_data.get("open24h") or 0)
+
+        if open_price > 0:
+            price_change = last_price - open_price
+            price_change_pct = price_change / open_price * 100
+        else:
+            price_change = 0.0
+            price_change_pct = 0.0
 
         return UnifiedTicker(
             symbol=symbol,
             last_price=last_price,
-            bid_price=float(ticker_data.get("bidPr", ticker_data.get("bestBid", 0))),
-            ask_price=float(ticker_data.get("askPr", ticker_data.get("bestAsk", 0))),
-            bid_quantity=float(ticker_data.get("bidSz", 0)),
-            ask_quantity=float(ticker_data.get("askSz", 0)),
-            volume_24h=float(ticker_data.get("baseVolume", ticker_data.get("volume24h", 0))),
-            quote_volume_24h=float(ticker_data.get("quoteVolume", 0)),
-            high_24h=float(ticker_data.get("high24h", 0)),
-            low_24h=float(ticker_data.get("low24h", 0)),
+            bid_price=float(ticker_data.get("bidPr") or ticker_data.get("bestBid") or 0),
+            ask_price=float(ticker_data.get("askPr") or ticker_data.get("bestAsk") or 0),
+            bid_quantity=float(ticker_data.get("bidSz") or 0),
+            ask_quantity=float(ticker_data.get("askSz") or 0),
+            volume_24h=float(ticker_data.get("baseVolume") or ticker_data.get("volume24h") or 0),
+            quote_volume_24h=float(ticker_data.get("quoteVolume") or 0),
+            high_24h=float(ticker_data.get("high24h") or 0),
+            low_24h=float(ticker_data.get("low24h") or 0),
             price_change_24h=price_change,
             price_change_pct_24h=price_change_pct,
             timestamp=_utc_now(),
@@ -419,33 +441,41 @@ class WEEXMapper:
             UnifiedCandle
         """
         if isinstance(candle_data, list):
-            return UnifiedCandle(
-                symbol=symbol,
-                timestamp=datetime.fromtimestamp(int(candle_data[0]) / 1000),
-                open=float(candle_data[1]),
-                high=float(candle_data[2]),
-                low=float(candle_data[3]),
-                close=float(candle_data[4]),
-                volume=float(candle_data[5]),
-                quote_volume=float(candle_data[6]) if len(candle_data) > 6 else 0.0,
-                trades=int(candle_data[7]) if len(candle_data) > 7 else 0,
-                interval=interval,
-            )
-        else:
-            # Dict format
-            ts = candle_data.get("ts", candle_data.get("timestamp", 0))
-            return UnifiedCandle(
-                symbol=symbol,
-                timestamp=datetime.fromtimestamp(int(ts) / 1000),
-                open=float(candle_data.get("open", 0)),
-                high=float(candle_data.get("high", 0)),
-                low=float(candle_data.get("low", 0)),
-                close=float(candle_data.get("close", 0)),
-                volume=float(candle_data.get("volume", candle_data.get("baseVolume", 0))),
-                quote_volume=float(candle_data.get("quoteVolume", 0)),
-                trades=int(candle_data.get("trades", 0)),
-                interval=interval,
-            )
+            return WEEXMapper._candle_from_list(candle_data, symbol, interval)
+        return WEEXMapper._candle_from_dict(candle_data, symbol, interval)
+
+    @staticmethod
+    def _candle_from_list(data: list, symbol: str, interval: str) -> UnifiedCandle:
+        """Parse candle from list format."""
+        return UnifiedCandle(
+            symbol=symbol,
+            timestamp=datetime.fromtimestamp(int(data[0]) / 1000),
+            open=float(data[1]),
+            high=float(data[2]),
+            low=float(data[3]),
+            close=float(data[4]),
+            volume=float(data[5]),
+            quote_volume=float(data[6]) if len(data) > 6 else 0.0,
+            trades=int(data[7]) if len(data) > 7 else 0,
+            interval=interval,
+        )
+
+    @staticmethod
+    def _candle_from_dict(data: dict, symbol: str, interval: str) -> UnifiedCandle:
+        """Parse candle from dict format."""
+        ts = data.get("ts") or data.get("timestamp") or 0
+        return UnifiedCandle(
+            symbol=symbol,
+            timestamp=datetime.fromtimestamp(int(ts) / 1000),
+            open=float(data.get("open") or 0),
+            high=float(data.get("high") or 0),
+            low=float(data.get("low") or 0),
+            close=float(data.get("close") or 0),
+            volume=float(data.get("volume") or data.get("baseVolume") or 0),
+            quote_volume=float(data.get("quoteVolume") or 0),
+            trades=int(data.get("trades") or 0),
+            interval=interval,
+        )
 
     @staticmethod
     def to_unified_trade(trade_data: dict[str, Any], symbol: str) -> UnifiedTrade:
@@ -459,15 +489,16 @@ class WEEXMapper:
         Returns:
             UnifiedTrade
         """
-        ts = trade_data.get("ts", trade_data.get("timestamp", 0))
+        ts = trade_data.get("ts") or trade_data.get("timestamp") or 0
+        timestamp = datetime.fromtimestamp(int(ts) / 1000) if ts else _utc_now()
 
         return UnifiedTrade(
             symbol=symbol,
-            trade_id=str(trade_data.get("tradeId", trade_data.get("id", ""))),
-            price=float(trade_data.get("price", 0)),
-            quantity=float(trade_data.get("size", trade_data.get("qty", 0))),
+            trade_id=str(trade_data.get("tradeId") or trade_data.get("id") or ""),
+            price=float(trade_data.get("price") or 0),
+            quantity=float(trade_data.get("size") or trade_data.get("qty") or 0),
             side=WEEXMapper.from_weex_order_side(trade_data.get("side", "buy")),
-            timestamp=datetime.fromtimestamp(int(ts) / 1000) if ts else _utc_now(),
+            timestamp=timestamp,
             is_maker=trade_data.get("isMaker", False),
         )
 

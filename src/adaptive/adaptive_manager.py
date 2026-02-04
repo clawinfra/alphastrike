@@ -11,30 +11,29 @@ This is the "brain" that makes the system self-tuning.
 """
 
 import asyncio
-import logging
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Callable, Optional
 import json
+import logging
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 
-from src.core.config import MarketRegime
 from src.adaptive.asset_config import (
     AdaptiveAssetConfig,
     load_asset_config,
-    save_asset_config,
 )
+from src.adaptive.hot_reload import HotReloadManager
 from src.adaptive.performance_tracker import (
     PerformanceTracker,
-    Trade,
     RetuneTrigger,
+    Trade,
 )
 from src.adaptive.regime_params import (
-    RegimeAwareParams,
     AdjustedParams,
+    RegimeAwareParams,
     create_symbol_specific_adjustments,
 )
-from src.adaptive.hot_reload import HotReloadManager, TradingState
+from src.core.config import MarketRegime
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +46,10 @@ class AdaptiveState:
     config: AdaptiveAssetConfig
     current_regime: MarketRegime = MarketRegime.RANGING
     regime_confidence: float = 0.5
-    adjusted_params: Optional[AdjustedParams] = None
+    adjusted_params: AdjustedParams | None = None
     pending_retune: bool = False
     retune_reason: str = ""
-    last_optimization: Optional[datetime] = None
+    last_optimization: datetime | None = None
     optimization_count: int = 0
 
     def to_dict(self) -> dict:
@@ -94,9 +93,9 @@ class AdaptiveManager:
 
     def __init__(
         self,
-        backtest_func: Optional[Callable[[str, dict], dict]] = None,
-        config_dir: Optional[Path] = None,
-        learned_params_dir: Optional[Path] = None,
+        backtest_func: Callable[[str, dict], dict] | None = None,
+        config_dir: Path | None = None,
+        learned_params_dir: Path | None = None,
         auto_optimize: bool = True,
         auto_save: bool = True,
     ):
@@ -164,7 +163,7 @@ class AdaptiveManager:
 
             # Create symbol-specific regime adjustments
             symbol_adjustments = create_symbol_specific_adjustments(symbol)
-            symbol_regime_params = RegimeAwareParams(
+            _symbol_regime_params = RegimeAwareParams(
                 custom_adjustments=symbol_adjustments,
                 confidence_scaling=True,
             )
@@ -196,7 +195,7 @@ class AdaptiveManager:
         if "require_daily_trend_for_short" in params:
             config.require_daily_trend_for_short = params["require_daily_trend_for_short"]
 
-    def record_trade(self, trade: Trade) -> Optional[RetuneTrigger]:
+    def record_trade(self, trade: Trade) -> RetuneTrigger | None:
         """
         Record a completed trade and check for retune triggers.
 
@@ -246,7 +245,7 @@ class AdaptiveManager:
 
     async def _run_optimization(self, symbol: str, reason: str) -> dict:
         """Run parameter optimization for a symbol."""
-        from src.adaptive.parameter_optimizer import ParameterOptimizer, OPTUNA_AVAILABLE
+        from src.adaptive.parameter_optimizer import OPTUNA_AVAILABLE, ParameterOptimizer
 
         if not OPTUNA_AVAILABLE:
             logger.warning("Optuna not installed, using quick optimization")
@@ -286,7 +285,7 @@ class AdaptiveManager:
                 # Update state
                 state.pending_retune = False
                 state.retune_reason = ""
-                state.last_optimization = datetime.now(timezone.utc)
+                state.last_optimization = datetime.now(UTC)
                 state.optimization_count += 1
 
                 # Clear trigger
@@ -396,8 +395,8 @@ class AdaptiveManager:
     def get_adjusted_params(
         self,
         symbol: str,
-        regime: Optional[MarketRegime] = None,
-        confidence: Optional[float] = None,
+        regime: MarketRegime | None = None,
+        confidence: float | None = None,
     ) -> AdjustedParams:
         """
         Get regime-adjusted parameters for trading.
@@ -436,12 +435,12 @@ class AdaptiveManager:
 
         return adjusted
 
-    def get_config(self, symbol: str) -> Optional[AdaptiveAssetConfig]:
+    def get_config(self, symbol: str) -> AdaptiveAssetConfig | None:
         """Get current config for a symbol."""
         state = self._states.get(symbol)
         return state.config if state else None
 
-    def get_state(self, symbol: str) -> Optional[AdaptiveState]:
+    def get_state(self, symbol: str) -> AdaptiveState | None:
         """Get full adaptive state for a symbol."""
         return self._states.get(symbol)
 

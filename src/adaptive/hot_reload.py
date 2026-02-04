@@ -7,10 +7,11 @@ Handles zero-downtime model and configuration updates with state preservation.
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional, Callable, Awaitable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ class TradingState:
     asset_params: dict[str, dict] = field(default_factory=dict)
 
     # Timestamp
-    saved_at: Optional[str] = None
+    saved_at: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -76,10 +77,10 @@ class ReloadResult:
 
     success: bool
     message: str
-    old_version: Optional[str] = None
-    new_version: Optional[str] = None
+    old_version: str | None = None
+    new_version: str | None = None
     rollback_performed: bool = False
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 class HotReloadManager:
@@ -97,8 +98,8 @@ class HotReloadManager:
 
     def __init__(
         self,
-        state_dir: Optional[Path] = None,
-        model_dir: Optional[Path] = None,
+        state_dir: Path | None = None,
+        model_dir: Path | None = None,
         min_validation_accuracy: float = 0.55,
     ):
         self.state_dir = state_dir or Path("data/state")
@@ -108,16 +109,16 @@ class HotReloadManager:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.model_dir.mkdir(parents=True, exist_ok=True)
 
-        self._current_state: Optional[TradingState] = None
+        self._current_state: TradingState | None = None
         self._is_reloading = False
         self._reload_lock = asyncio.Lock()
 
         # Callbacks
-        self._on_reload_start: Optional[Callable[[], Awaitable[None]]] = None
-        self._on_reload_complete: Optional[Callable[[ReloadResult], Awaitable[None]]] = None
-        self._train_models: Optional[Callable[[], Awaitable[tuple[Any, str]]]] = None
-        self._validate_models: Optional[Callable[[Any], Awaitable[float]]] = None
-        self._swap_models: Optional[Callable[[Any], Awaitable[None]]] = None
+        self._on_reload_start: Callable[[], Awaitable[None]] | None = None
+        self._on_reload_complete: Callable[[ReloadResult], Awaitable[None]] | None = None
+        self._train_models: Callable[[], Awaitable[tuple[Any, str]]] | None = None
+        self._validate_models: Callable[[Any], Awaitable[float]] | None = None
+        self._swap_models: Callable[[Any], Awaitable[None]] | None = None
 
     @property
     def is_reloading(self) -> bool:
@@ -125,11 +126,11 @@ class HotReloadManager:
 
     def register_callbacks(
         self,
-        on_reload_start: Optional[Callable[[], Awaitable[None]]] = None,
-        on_reload_complete: Optional[Callable[[ReloadResult], Awaitable[None]]] = None,
-        train_models: Optional[Callable[[], Awaitable[tuple[Any, str]]]] = None,
-        validate_models: Optional[Callable[[Any], Awaitable[float]]] = None,
-        swap_models: Optional[Callable[[Any], Awaitable[None]]] = None,
+        on_reload_start: Callable[[], Awaitable[None]] | None = None,
+        on_reload_complete: Callable[[ReloadResult], Awaitable[None]] | None = None,
+        train_models: Callable[[], Awaitable[tuple[Any, str]]] | None = None,
+        validate_models: Callable[[Any], Awaitable[float]] | None = None,
+        swap_models: Callable[[Any], Awaitable[None]] | None = None,
     ) -> None:
         """Register callback functions for reload process."""
         if on_reload_start:
@@ -145,7 +146,7 @@ class HotReloadManager:
 
     async def save_state(self, state: TradingState) -> Path:
         """Save trading state to disk."""
-        state.saved_at = datetime.now(timezone.utc).isoformat()
+        state.saved_at = datetime.now(UTC).isoformat()
         self._current_state = state
 
         state_file = self.state_dir / "trading_state.json"
@@ -165,14 +166,14 @@ class HotReloadManager:
         logger.info(f"State saved to {state_file}")
         return state_file
 
-    async def load_state(self) -> Optional[TradingState]:
+    async def load_state(self) -> TradingState | None:
         """Load trading state from disk."""
         state_file = self.state_dir / "trading_state.json"
 
         if not state_file.exists():
             return None
 
-        with open(state_file, "r") as f:
+        with open(state_file) as f:
             data = json.load(f)
 
         state = TradingState.from_dict(data)
@@ -280,7 +281,7 @@ class HotReloadManager:
     async def graceful_restart(
         self,
         state: TradingState,
-        restart_command: Optional[str] = None,
+        restart_command: str | None = None,
     ) -> None:
         """
         Perform a graceful restart with state preservation.
@@ -295,7 +296,7 @@ class HotReloadManager:
 
         # Write restart marker
         restart_marker = self.state_dir / "restart_pending"
-        restart_marker.write_text(datetime.now(timezone.utc).isoformat())
+        restart_marker.write_text(datetime.now(UTC).isoformat())
 
         if restart_command:
             import subprocess
@@ -304,7 +305,7 @@ class HotReloadManager:
 
         logger.info("Graceful restart initiated")
 
-    async def check_restart_recovery(self) -> Optional[TradingState]:
+    async def check_restart_recovery(self) -> TradingState | None:
         """
         Check if we're recovering from a restart and load state.
 

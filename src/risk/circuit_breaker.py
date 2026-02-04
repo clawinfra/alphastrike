@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Literal
 
@@ -206,7 +206,7 @@ class CircuitBreaker:
             direction: Trade direction
             pnl_pct: P&L as percentage of account (e.g., 0.02 for +2%)
         """
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         was_profitable = pnl_pct > 0
 
         # Record trade
@@ -264,8 +264,8 @@ class CircuitBreaker:
 
     def get_status_summary(self) -> dict:
         """Get summary of circuit breaker status."""
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        daily = self._daily_stats.get(today, DailyStats(date=datetime.now(timezone.utc)))
+        today = datetime.now(UTC).strftime("%Y-%m-%d")
+        daily = self._daily_stats.get(today, DailyStats(date=datetime.now(UTC)))
 
         return {
             "consecutive_losses": self._consecutive_losses,
@@ -278,7 +278,7 @@ class CircuitBreaker:
 
     def _check_consecutive_losses(self) -> BreakerStatus:
         """Check consecutive loss breaker."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Check if in cooldown period
         if self._last_halt_time:
@@ -321,7 +321,7 @@ class CircuitBreaker:
 
     def _check_daily_loss(self) -> BreakerStatus:
         """Check daily loss breaker."""
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today = datetime.now(UTC).strftime("%Y-%m-%d")
         daily = self._daily_stats.get(today)
 
         if not daily:
@@ -357,7 +357,7 @@ class CircuitBreaker:
 
     def _check_weekly_loss(self) -> BreakerStatus:
         """Check weekly loss breaker."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         week_start = now - timedelta(days=now.weekday())
         week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
 
