@@ -70,3 +70,11 @@ Thumbs.db
 *.tmp
 *.temp
 handoff.json
+
+# Data directories (generated/cached data)
+data/adaptive/
+data/state/
+data/cache/
+
+# Paper trading logs
+paper_trades/
