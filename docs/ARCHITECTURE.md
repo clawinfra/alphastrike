@@ -1,8 +1,8 @@
 # AlphaStrike Trading Bot - Architecture Document
 
-**Version:** 2.9
+**Version:** 3.0
 **Last Updated:** February 2026
-**Status:** Production (Medallion Targets Achieved)
+**Status:** Production (Medallion Targets Achieved + Disaster Recovery)
 
 ---
 
@@ -23,6 +23,7 @@
 13. [LLM Decision Layer](#13-llm-decision-layer)
 14. [Dynamic Leverage System](#14-dynamic-leverage-system)
 15. [Medallion Strategy Architecture](#15-medallion-strategy-architecture)
+16. [Disaster Recovery & Resilience System](#16-disaster-recovery--resilience-system)
 
 ---
 
@@ -3233,3 +3234,255 @@ class BacktestConfig:
 | `src/strategy/simons_engine.py` | Signal generation engine |
 | `data/adaptive/simons_config.json` | Tunable parameters |
 | `models/lightgbm_hyperliquid_*.txt` | Per-asset ML models |
+
+---
+
+## 16. Disaster Recovery & Resilience System
+
+### 16.1 Overview
+
+The resilience system ensures trading continuity and data integrity across failures. It implements event sourcing for immutable audit trails, multi-tier cloud backup for redundancy, and automatic reconciliation with on-chain state.
+
+**Design Principle:** On-chain state is always the source of truth. Local database is a cache and audit log, not authoritative.
+
+### 16.2 Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           RESILIENCE LAYER                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌──────────────────────────────────────────────────────────────────────┐   │
+│  │                         EVENT SOURCING                                │   │
+│  │                                                                       │   │
+│  │   Trading Action ──► Event Created ──► Local WAL ──► Cloud Backup    │   │
+│  │                            │                              │           │   │
+│  │                            ▼                              ▼           │   │
+│  │                    State Materialized            Audit Trail          │   │
+│  │                                                                       │   │
+│  └──────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+│  ┌──────────────────────────────────────────────────────────────────────┐   │
+│  │                      MULTI-TIER CLOUD BACKUP                          │   │
+│  │                                                                       │   │
+│  │   ┌─────────────┐    ┌─────────────┐    ┌─────────────┐              │   │
+│  │   │ HOT TIER    │    │ WARM TIER   │    │ COLD TIER   │              │   │
+│  │   │ Upstash     │    │ Turso       │    │ Supabase    │              │   │
+│  │   │ Redis       │    │ SQLite      │    │ Postgres    │              │   │
+│  │   │             │    │             │    │             │              │   │
+│  │   │ • 1-5ms     │    │ • 5-10ms    │    │ • 50-100ms  │              │   │
+│  │   │ • Locks     │    │ • Events    │    │ • Full Hist │              │   │
+│  │   │ • State     │    │ • Queryable │    │ • Analytics │              │   │
+│  │   │ • 24h TTL   │    │ • 30 days   │    │ • Forever   │              │   │
+│  │   └─────────────┘    └─────────────┘    └─────────────┘              │   │
+│  │                                                                       │   │
+│  └──────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+│  ┌──────────────────────────────────────────────────────────────────────┐   │
+│  │                      RECONCILIATION ENGINE                            │   │
+│  │                                                                       │   │
+│  │   On Startup:                                                         │   │
+│  │   ┌────────────┐    ┌────────────┐    ┌────────────┐                 │   │
+│  │   │ Load Local │───►│ Query      │───►│ Compare &  │                 │   │
+│  │   │ State      │    │ On-Chain   │    │ Reconcile  │                 │   │
+│  │   └────────────┘    └────────────┘    └────────────┘                 │   │
+│  │                                              │                        │   │
+│  │                                              ▼                        │   │
+│  │                           ┌─────────────────────────────────┐        │   │
+│  │                           │ Auto-fix minor issues           │        │   │
+│  │                           │ Alert on critical mismatches    │        │   │
+│  │                           │ Resume trading if healthy       │        │   │
+│  │                           └─────────────────────────────────┘        │   │
+│  │                                                                       │   │
+│  └──────────────────────────────────────────────────────────────────────┘   │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 16.3 Components
+
+#### 16.3.1 Event Store (`src/resilience/event_store.py`)
+
+Append-only event log implementing event sourcing pattern.
+
+| Feature | Description |
+|---------|-------------|
+| **Hash Chain** | Each event includes hash of previous event for integrity |
+| **Event Types** | Signals, orders, fills, positions, reconciliation, system |
+| **Checkpoints** | Periodic state snapshots for faster recovery |
+| **Replay** | Full state reconstruction by replaying events |
+
+**Event Types:**
+```python
+class EventType(str, Enum):
+    # Lifecycle
+    BOT_STARTED = "bot_started"
+    BOT_STOPPED = "bot_stopped"
+    
+    # Orders
+    ORDER_SENT = "order_sent"
+    ORDER_FILLED = "order_filled"
+    ORDER_CANCELLED = "order_cancelled"
+    
+    # Positions
+    POSITION_OPENED = "position_opened"
+    POSITION_CLOSED = "position_closed"
+    
+    # Reconciliation
+    RECONCILIATION_MISMATCH = "reconciliation_mismatch"
+    STATE_RECOVERED = "state_recovered"
+```
+
+#### 16.3.2 Cloud Backup (`src/resilience/cloud_backup.py`)
+
+Multi-tier backup strategy with graceful degradation.
+
+| Tier | Service | Latency | Purpose | Retention |
+|------|---------|---------|---------|-----------|
+| Hot | Upstash Redis | 1-5ms | Current state, distributed locks | 24 hours |
+| Warm | Turso SQLite | 5-10ms | Recent events, queryable | 30 days |
+| Cold | Supabase | 50-100ms | Full audit trail, analytics | Forever |
+
+**Key Features:**
+- Non-blocking async writes (trading never waits)
+- Automatic retry queue for failed backups
+- Distributed locking to prevent split-brain
+- Health checks for each tier
+
+#### 16.3.3 Reconciliation Engine (`src/resilience/reconciliation.py`)
+
+Verifies local state matches on-chain reality.
+
+**Issue Types & Handling:**
+
+| Issue | Severity | Action |
+|-------|----------|--------|
+| Size rounding (<1%) | INFO | Auto-fix |
+| Size mismatch (1-10%) | WARNING | Auto-fix, log |
+| Size mismatch (>10%) | CRITICAL | Manual review |
+| Unknown position | CRITICAL | Manual review |
+| Missing position | CRITICAL | Alert, halt trading |
+| Balance drift | WARNING | Auto-fix |
+
+**Resolution Flow:**
+```
+Issue Detected ─┬─► Auto-fixable? ─► YES ─► Apply Fix ─► Log Event
+                │
+                └─► NO ─► Severity? ─┬─► CRITICAL ─► Halt Trading
+                                     │
+                                     └─► WARNING ─► Alert & Continue
+```
+
+#### 16.3.4 Auto Recovery (`src/resilience/recovery.py`)
+
+Automatic state recovery on startup.
+
+**Recovery Priority:**
+1. Local WAL (fastest, most complete)
+2. Cloud Hot Tier (if WAL corrupted)
+3. Cloud Warm Tier (if hot tier empty)
+4. Chain-only (last resort, limited metadata)
+
+**Recovery Sequence:**
+```python
+async def recover():
+    # 1. Try local WAL
+    state = await recover_from_local()
+    
+    # 2. Fallback to cloud if needed
+    if state is None:
+        state = await recover_from_cloud()
+    
+    # 3. Reconcile with chain (always)
+    report = await reconcile_with_chain(state)
+    
+    # 4. Apply auto-fixes
+    state = apply_reconciliation_fixes(state, report)
+    
+    # 5. Resume overdue exits
+    overdue = get_overdue_exits(state)
+    for exit in overdue:
+        await execute_exit(exit)
+    
+    return state, report
+```
+
+### 16.4 Disaster Scenarios
+
+| Scenario | Detection | Recovery |
+|----------|-----------|----------|
+| Bot crash mid-trade | On restart | Reconcile with chain, resume |
+| Hard drive failure | WAL missing | Restore from cloud backup |
+| Network partition | Order ack timeout | Check chain for actual state |
+| Split brain (2 bots) | Lock conflict | Second instance blocked |
+| Missed time exit | Overdue check | Execute immediately on restart |
+| Oracle desync | Price validation | Use chain's oracle as truth |
+
+### 16.5 Configuration
+
+**Environment Variables:**
+```bash
+# Hot Tier (Upstash Redis)
+UPSTASH_REDIS_URL=https://...upstash.io
+UPSTASH_REDIS_TOKEN=AX...
+
+# Warm Tier (Turso SQLite)
+TURSO_DATABASE_URL=libsql://...turso.io
+TURSO_AUTH_TOKEN=ey...
+
+# Cold Tier (Supabase)
+SUPABASE_URL=https://...supabase.co
+SUPABASE_KEY=ey...
+
+# Instance ID (for distributed locking)
+INSTANCE_ID=alphastrike-prod-1
+```
+
+### 16.6 Supabase Schema
+
+```sql
+-- Events table (cold storage)
+CREATE TABLE trading_events (
+    event_id TEXT PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL,
+    symbol TEXT,
+    payload JSONB NOT NULL,
+    sequence_number BIGINT NOT NULL,
+    event_hash TEXT NOT NULL,
+    instance_id TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_events_timestamp ON trading_events(timestamp);
+CREATE INDEX idx_events_symbol ON trading_events(symbol);
+CREATE INDEX idx_events_type ON trading_events(event_type);
+
+-- State snapshots
+CREATE TABLE state_snapshots (
+    key TEXT PRIMARY KEY,
+    state JSONB NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+### 16.7 Files
+
+| File | Purpose |
+|------|---------|
+| `src/resilience/__init__.py` | Module exports |
+| `src/resilience/event_store.py` | Append-only event log |
+| `src/resilience/cloud_backup.py` | Multi-tier cloud backup |
+| `src/resilience/reconciliation.py` | On-chain reconciliation |
+| `src/resilience/recovery.py` | Auto recovery manager |
+
+### 16.8 Future Enhancements (Backlog)
+
+| Enhancement | Priority | Description |
+|-------------|----------|-------------|
+| Multi-region failover | Medium | Standby in different datacenter |
+| External watchdog | High | Independent service for scheduled exits |
+| PagerDuty integration | Medium | Alert on critical issues |
+| Backup verification | Low | Cronjob to verify backup integrity |
+| Replay testing | Low | Test recovery with historical data |
+
