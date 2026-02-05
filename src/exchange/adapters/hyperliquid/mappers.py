@@ -632,28 +632,43 @@ class HyperliquidMapper:
     @classmethod
     def to_unified_account_balance(
         cls,
-        state: dict[str, Any],
+        spot_state: dict[str, Any],
+        perps_state: dict[str, Any] | None = None,
     ) -> UnifiedAccountBalance:
         """
-        Convert Hyperliquid clearinghouse state to UnifiedAccountBalance.
+        Convert Hyperliquid spot and perps state to UnifiedAccountBalance.
 
         Args:
-            state: Hyperliquid clearinghouseState response
+            spot_state: Hyperliquid spotClearinghouseState response
+            perps_state: Hyperliquid clearinghouseState response (optional)
 
         Returns:
-            UnifiedAccountBalance
+            UnifiedAccountBalance with correct spot USDC balance
         """
-        margin_summary = state.get("marginSummary", {})
-        cross_margin = state.get("crossMarginSummary", {})
+        # Extract USDC balance from spot state
+        usdc_total = 0.0
+        usdc_hold = 0.0
+
+        for balance in spot_state.get("balances", []):
+            if balance.get("coin") == "USDC":
+                usdc_total = float(balance.get("total", 0))
+                usdc_hold = float(balance.get("hold", 0))
+                break
+
+        usdc_available = usdc_total - usdc_hold
+
+        # Get unrealized PnL from perps state if available
+        unrealized_pnl = 0.0
+        if perps_state:
+            margin_summary = perps_state.get("marginSummary", {})
+            unrealized_pnl = float(margin_summary.get("totalNtlPos", 0))
 
         return UnifiedAccountBalance(
-            total_balance=float(margin_summary.get("accountValue", 0)),
-            available_balance=float(state.get("withdrawable", 0)),
-            margin_balance=float(cross_margin.get("totalMarginUsed", 0)),
-            unrealized_pnl=float(
-                margin_summary.get("totalNtlPos", 0)
-            ),  # Approximate
-            currency="USDC",  # Hyperliquid uses USDC
+            total_balance=usdc_total,
+            available_balance=usdc_available,
+            margin_balance=usdc_hold,  # Amount held as margin for positions
+            unrealized_pnl=unrealized_pnl,
+            currency="USDC",
             timestamp=_utc_now(),
         )
 

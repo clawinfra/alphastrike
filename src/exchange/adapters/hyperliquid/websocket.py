@@ -84,11 +84,14 @@ class HyperliquidWebSocket:
         self._reconnect_attempts = 0
         self._max_reconnect_attempts = 100
 
-        # Ping/pong
-        self._ping_interval = 20
+        # Ping/pong - use protocol-level ping with longer intervals
+        # Hyperliquid doesn't respond to JSON pings, use websocket protocol pings
+        self._ping_interval = 30  # seconds between pings
         self._ping_task: asyncio.Task | None = None
-        self._last_pong = time.time()
-        self._pong_timeout = 10
+        self._last_message = time.time()  # Track any message as activity
+        # Connection timeout: For hourly candles, set high timeout since data is sparse
+        # allMids subscription provides continuous updates to keep connection alive
+        self._connection_timeout = 300  # 5 minutes - allMids provides updates every few seconds
 
         # Callbacks
         self._candle_callbacks: list[CandleCallback] = []
@@ -101,6 +104,11 @@ class HyperliquidWebSocket:
         self._l2_subs: set[str] = set()  # symbols
         self._trade_subs: set[str] = set()  # symbols
         self._all_mids_subscribed = False
+
+        # Message tracking for debugging
+        self._message_count = 0
+        self._candle_count = 0
+        self._last_stats_time = time.time()
 
     @property
     def is_connected(self) -> bool:
@@ -129,7 +137,7 @@ class HyperliquidWebSocket:
             self._state = ConnectionState.CONNECTED
             self._current_delay = self._base_delay
             self._reconnect_attempts = 0
-            self._last_pong = time.time()
+            self._last_message = time.time()
 
             logger.info("Hyperliquid WebSocket connected")
 
@@ -203,15 +211,30 @@ class HyperliquidWebSocket:
                 if not self._ws:
                     break
 
-                if time.time() - self._last_pong > self._ping_interval + self._pong_timeout:
-                    logger.warning("Pong timeout, reconnecting")
+                # Check if we've received ANY message recently
+                # This is more reliable than ping/pong for Hyperliquid
+                time_since_message = time.time() - self._last_message
+                if time_since_message > self._connection_timeout:
+                    logger.warning(
+                        f"No messages for {time_since_message:.0f}s, reconnecting"
+                    )
                     await self._trigger_reconnect()
                     break
 
-                # Hyperliquid expects ping as JSON
-                ping_msg = json.dumps({"method": "ping"})
-                await self._ws.send(ping_msg)
-                logger.debug("Sent ping")
+                # Log message stats every 60 seconds
+                stats_elapsed = time.time() - self._last_stats_time
+                if stats_elapsed >= 60:
+                    logger.info(
+                        f"WS stats: {self._message_count} msgs, "
+                        f"{self._candle_count} candles in last {stats_elapsed:.0f}s"
+                    )
+                    self._message_count = 0
+                    self._candle_count = 0
+                    self._last_stats_time = time.time()
+
+                logger.debug(
+                    f"Heartbeat OK: last message {time_since_message:.0f}s ago"
+                )
 
             except asyncio.CancelledError:
                 break
@@ -235,9 +258,13 @@ class HyperliquidWebSocket:
         """Resubscribe to all previous subscriptions after reconnect."""
         logger.info("Resubscribing to channels")
 
+        # Small delay between subscriptions to avoid rate limiting (especially on testnet)
+        sub_delay = 0.1  # 100ms between each subscription
+
         # Resubscribe to allMids
         if self._all_mids_subscribed:
             await self._send_subscribe({"type": "allMids"})
+            await asyncio.sleep(sub_delay)
 
         # Resubscribe to candles
         for symbol, interval in self._candle_subs.items():
@@ -247,6 +274,7 @@ class HyperliquidWebSocket:
                 "coin": coin,
                 "interval": interval,
             })
+            await asyncio.sleep(sub_delay)
 
         # Resubscribe to L2 books
         for symbol in self._l2_subs:
@@ -255,6 +283,7 @@ class HyperliquidWebSocket:
                 "type": "l2Book",
                 "coin": coin,
             })
+            await asyncio.sleep(sub_delay)
 
         # Resubscribe to trades
         for symbol in self._trade_subs:
@@ -263,6 +292,7 @@ class HyperliquidWebSocket:
                 "type": "trades",
                 "coin": coin,
             })
+            await asyncio.sleep(sub_delay)
 
     async def _send_subscribe(self, subscription: dict) -> None:
         """Send subscription message."""
@@ -300,11 +330,23 @@ class HyperliquidWebSocket:
         """
         Subscribe to candle updates for symbols.
 
+        Also subscribes to allMids to keep the connection alive with continuous
+        price updates (especially important for longer intervals like 1h).
+
         Args:
             symbols: List of unified symbols (e.g., ["BTCUSDT"])
             interval: Candle interval (1m, 5m, 15m, 1h, 4h, 1d)
         """
         hl_interval = HyperliquidMapper.to_hyperliquid_interval(interval)
+
+        # Auto-subscribe to allMids for connection keepalive
+        # allMids sends updates every few seconds, preventing timeout on sparse candle data
+        if not self._all_mids_subscribed:
+            self._all_mids_subscribed = True
+            logger.info("Auto-subscribing to allMids for connection keepalive")
+            if self.is_connected:
+                await self._send_subscribe({"type": "allMids"})
+                await asyncio.sleep(0.1)
 
         for symbol in symbols:
             self._candle_subs[symbol] = hl_interval
@@ -317,6 +359,9 @@ class HyperliquidWebSocket:
                     "coin": coin,
                     "interval": hl_interval,
                 })
+                await asyncio.sleep(0.1)  # Throttle to avoid rate limiting
+
+        logger.info(f"Subscribed to {len(symbols)} candle feeds ({interval})")
 
     async def subscribe_tickers(self, symbols: list[str]) -> None:
         """
@@ -475,15 +520,18 @@ class HyperliquidWebSocket:
 
     async def _handle_message(self, message: str) -> None:
         """Process incoming WebSocket message."""
+        # Track message activity for connection health
+        self._last_message = time.time()
+        self._message_count += 1
+
         try:
             data = json.loads(message)
         except json.JSONDecodeError:
             logger.warning(f"Invalid JSON message: {message[:100]}")
             return
 
-        # Handle pong
+        # Handle pong (if server sends JSON pong)
         if data.get("method") == "pong" or "pong" in str(data):
-            self._last_pong = time.time()
             logger.debug("Received pong")
             return
 
@@ -512,6 +560,10 @@ class HyperliquidWebSocket:
 
             candle = self._parse_candle(candle_data, coin, interval)
             if candle:
+                self._candle_count += 1
+                logger.debug(
+                    f"Candle received: {coin} {interval} close=${candle.close:.2f}"
+                )
                 for callback in self._candle_callbacks:
                     callback(candle)
 
