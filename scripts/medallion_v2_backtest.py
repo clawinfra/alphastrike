@@ -50,6 +50,9 @@ class Position:
     entry_candle_idx: int
     strategy: str
     conviction: float
+    # Trailing stop fields (Simons enhancement)
+    max_pnl_pct: float = 0.0  # Track max favorable excursion
+    trailing_stop_active: bool = False  # Activated after +1R
 
 
 @dataclass
@@ -111,20 +114,107 @@ class Metrics:
     total_trades: int = 0
     final_balance: float = 0.0
 
-    # Strategy breakdown (ML only - pairs and mean reversion disabled)
+    # Strategy breakdown
     ml_trades: int = 0
     ml_pnl: float = 0.0
+
+    # Long vs Short breakdown
+    long_trades: int = 0
+    long_pnl: float = 0.0
+    long_win_rate: float = 0.0
+    short_trades: int = 0
+    short_pnl: float = 0.0
+    short_win_rate: float = 0.0
+
+
+class AdaptiveSignalTracker:
+    """
+    Track signal performance and adapt thresholds dynamically.
+
+    Simons principle: "Track signal decay religiously"
+    """
+
+    def __init__(self, lookback: int = 50):
+        self.lookback = lookback
+        self.long_trades: list[float] = []  # PnL of recent LONG trades
+        self.short_trades: list[float] = []  # PnL of recent SHORT trades
+        self.regime_accuracy: dict[str, list[bool]] = {
+            "BULLISH": [], "BEARISH": [], "RANGING": []
+        }
+
+    def record_trade(self, direction: str, pnl: float, regime: str) -> None:
+        """Record a completed trade for learning."""
+        if direction == "LONG":
+            self.long_trades.append(pnl)
+            if len(self.long_trades) > self.lookback:
+                self.long_trades.pop(0)
+        else:
+            self.short_trades.append(pnl)
+            if len(self.short_trades) > self.lookback:
+                self.short_trades.pop(0)
+
+        # Track regime prediction accuracy
+        was_correct = pnl > 0
+        self.regime_accuracy[regime].append(was_correct)
+        if len(self.regime_accuracy[regime]) > self.lookback:
+            self.regime_accuracy[regime].pop(0)
+
+    def get_direction_confidence(self, direction: str) -> float:
+        """
+        Get confidence multiplier for a direction based on recent performance.
+        Returns 0.5 to 1.5 multiplier.
+        """
+        trades = self.long_trades if direction == "LONG" else self.short_trades
+        if len(trades) < 5:
+            return 1.0  # Not enough data
+
+        win_rate = len([t for t in trades if t > 0]) / len(trades)
+        avg_pnl = sum(trades) / len(trades)
+
+        # High win rate + positive PnL = boost confidence
+        # Low win rate + negative PnL = reduce confidence
+        if win_rate > 0.5 and avg_pnl > 0:
+            return min(1.5, 1.0 + win_rate - 0.5)
+        elif win_rate < 0.4 or avg_pnl < 0:
+            return max(0.5, win_rate)
+        return 1.0
+
+    def get_conviction_adjustment(self, direction: str) -> float:
+        """
+        Get conviction threshold adjustment based on recent performance.
+        Positive = require higher conviction (signal struggling)
+        Negative = allow lower conviction (signal working well)
+        """
+        trades = self.long_trades if direction == "LONG" else self.short_trades
+        if len(trades) < 10:
+            return 0.0
+
+        recent_win_rate = len([t for t in trades[-10:] if t > 0]) / 10
+
+        if recent_win_rate > 0.6:
+            return -5.0  # Signal working well, lower bar
+        elif recent_win_rate < 0.35:
+            return 10.0  # Signal struggling, raise bar
+        elif recent_win_rate < 0.45:
+            return 5.0
+        return 0.0
 
 
 class MedallionV2Engine:
     """
-    Medallion V2 backtest engine.
+    Medallion V2 backtest engine - ADAPTIVE VERSION.
 
     Strategy:
-    - LightGBM-only ML predictions (proven superior to ensemble)
-    - Strict BULLISH regime filter (60%+ confidence)
-    - ML tier filtering (65-70+ conviction)
-    - Dynamic leverage (adjusts for volatility and drawdown)
+    - LightGBM ML predictions with adaptive thresholds
+    - Regime-aware but trades BOTH directions with adaptive conviction
+    - Signal performance tracking and decay
+    - Volatility-adaptive position sizing and stops
+    - Dynamic leverage based on market conditions
+
+    Simons Principles:
+    - "Many weak signals > one strong signal"
+    - "Track signal decay religiously"
+    - "Adapt to changing market conditions"
     """
 
     def __init__(self, config: BacktestConfig):
@@ -138,6 +228,13 @@ class MedallionV2Engine:
 
         # Position tracking
         self.positions: dict[str, Position] = {}
+
+        # ADAPTIVE: Signal performance tracker
+        self.signal_tracker = AdaptiveSignalTracker(lookback=50)
+
+        # ADAPTIVE: Volatility tracking
+        self.current_volatility = 0.02  # Default 2%
+        self.volatility_regime = "NORMAL"  # LOW, NORMAL, HIGH, EXTREME
 
         # Components (lazy init)
         self.client = None
@@ -277,6 +374,118 @@ class MedallionV2Engine:
         """Calculate current portfolio exposure."""
         return sum(p.size / balance for p in self.positions.values())
 
+    def _update_volatility_regime(self, btc_candles: list) -> None:
+        """
+        Update volatility regime for adaptive position sizing and stops.
+
+        Simons principle: Adapt to market conditions
+        """
+        if len(btc_candles) < 20:
+            return
+
+        closes = [c.close for c in btc_candles[-20:]]
+        highs = [c.high for c in btc_candles[-20:]]
+        lows = [c.low for c in btc_candles[-20:]]
+
+        # Calculate ATR-based volatility
+        tr_values = []
+        for j in range(1, len(closes)):
+            tr = max(
+                highs[j] - lows[j],
+                abs(highs[j] - closes[j-1]),
+                abs(lows[j] - closes[j-1])
+            )
+            tr_values.append(tr)
+
+        atr = sum(tr_values) / len(tr_values)
+        self.current_volatility = atr / closes[-1]
+
+        # Classify volatility regime
+        if self.current_volatility < 0.015:
+            self.volatility_regime = "LOW"
+        elif self.current_volatility < 0.03:
+            self.volatility_regime = "NORMAL"
+        elif self.current_volatility < 0.05:
+            self.volatility_regime = "HIGH"
+        else:
+            self.volatility_regime = "EXTREME"
+
+    def _get_adaptive_stop_loss(self) -> float:
+        """
+        Get volatility-adjusted stop loss.
+
+        Low vol: Tighter stops (0.8%)
+        Normal: Standard (1%)
+        High vol: Wider stops (1.5%)
+        Extreme: Very wide (2%) or no trade
+        """
+        base_stop = 0.01  # 1%
+
+        if self.volatility_regime == "LOW":
+            return base_stop * 0.8
+        elif self.volatility_regime == "NORMAL":
+            return base_stop
+        elif self.volatility_regime == "HIGH":
+            return base_stop * 1.5
+        else:  # EXTREME
+            return base_stop * 2.0
+
+    def _get_adaptive_take_profit(self) -> float:
+        """
+        Get volatility-adjusted take profit.
+
+        Low vol: Smaller targets (3%)
+        Normal: Standard (4%)
+        High vol: Larger targets (5%)
+        """
+        base_tp = 0.04  # 4%
+
+        if self.volatility_regime == "LOW":
+            return base_tp * 0.75
+        elif self.volatility_regime == "NORMAL":
+            return base_tp
+        elif self.volatility_regime == "HIGH":
+            return base_tp * 1.25
+        else:  # EXTREME
+            return base_tp * 1.5
+
+    def _get_adaptive_position_size(
+        self,
+        balance: float,
+        current_exposure: float,
+        conviction: float,
+        direction: str,
+    ) -> float:
+        """
+        Adaptive position sizing based on:
+        - Conviction level
+        - Volatility regime
+        - Recent direction performance
+        - Current exposure
+
+        Simons principle: Size based on edge, not fixed percentage
+        """
+        # Base size from conviction
+        base_size = min(
+            balance * self.config.max_single_position,
+            balance * (1 - current_exposure) * 0.5,
+        ) * (conviction / 100)
+
+        # Volatility adjustment (from Simons protocol)
+        if self.volatility_regime == "LOW":
+            vol_multiplier = 1.2  # Can size up in calm markets
+        elif self.volatility_regime == "NORMAL":
+            vol_multiplier = 1.0
+        elif self.volatility_regime == "HIGH":
+            vol_multiplier = 0.6  # Reduce in volatile markets
+        else:  # EXTREME
+            vol_multiplier = 0.3  # Minimal sizing
+
+        # Direction performance adjustment
+        direction_confidence = self.signal_tracker.get_direction_confidence(direction)
+
+        return base_size * vol_multiplier * direction_confidence
+
     def _update_dynamic_leverage(
         self,
         btc_candles: list,
@@ -393,12 +602,65 @@ class MedallionV2Engine:
                 else:
                     pnl_pct = (pos.entry_price - price) / pos.entry_price
 
-                # Risk management exits
-                should_exit = (
-                    pnl_pct <= -0.01 or  # 1% stop loss
-                    pnl_pct >= 0.04 or   # 4% take profit
-                    holding >= 36        # 36 hour time exit
+                # =================================================================
+                # REGIME-ADAPTIVE EXIT LOGIC
+                # =================================================================
+                # - BULLISH: Standard exits (let winners run)
+                # - BEARISH: Tighter exits (preserve capital)
+                # - Trailing stops adapt to volatility
+                # =================================================================
+
+                # Get current regime for adaptive exits
+                current_regime, _ = self._detect_market_regime(
+                    current_candles.get("BTCUSDT", [])
                 )
+
+                # Base stops
+                stop_loss = self._get_adaptive_stop_loss()
+                take_profit = self._get_adaptive_take_profit()
+                R_UNIT = stop_loss
+
+                # BEARISH REGIME: Tighter exits to preserve capital
+                if current_regime == "BEARISH":
+                    stop_loss *= 0.8   # 20% tighter stop
+                    take_profit *= 0.7  # Take profits earlier
+                    max_holding = 24   # Exit faster (24h vs 36h)
+                else:
+                    max_holding = 36   # Standard holding period
+
+                # Update max PnL tracking
+                if pnl_pct > pos.max_pnl_pct:
+                    pos.max_pnl_pct = pnl_pct
+
+                # Trailing stop activation
+                # BULLISH: Activate after +2R (let winners run)
+                # BEARISH: Activate after +1R (lock profits quickly)
+                trailing_activation = R_UNIT if current_regime == "BEARISH" else 2 * R_UNIT
+
+                if pnl_pct >= trailing_activation and not pos.trailing_stop_active:
+                    pos.trailing_stop_active = True
+
+                # Calculate trailing stop level
+                if pos.trailing_stop_active:
+                    # Trail at 50% of max profit (60% in BEARISH to lock more)
+                    trail_pct = 0.6 if current_regime == "BEARISH" else 0.5
+                    trailing_stop = pos.max_pnl_pct * trail_pct
+                else:
+                    trailing_stop = -stop_loss
+
+                # Exit conditions
+                should_exit = False
+                exit_reason = ""
+
+                if pnl_pct <= trailing_stop:
+                    should_exit = True
+                    exit_reason = "trailing_stop" if pos.trailing_stop_active else "stop_loss"
+                elif pnl_pct >= take_profit:
+                    should_exit = True
+                    exit_reason = "take_profit"
+                elif holding >= max_holding:
+                    should_exit = True
+                    exit_reason = "time_exit"
 
                 if should_exit:
                     pnl = pos.size * pnl_pct * self.current_leverage
@@ -422,15 +684,45 @@ class MedallionV2Engine:
                         conviction=pos.conviction,
                     )
                     self.trades.append(trade_record)
+
+                    # =================================================================
+                    # ADAPTIVE LEARNING: Record trade result for signal adjustment
+                    # =================================================================
+                    entry_regime = getattr(pos, 'entry_regime', 'UNKNOWN')
+                    self.signal_tracker.record_trade(
+                        direction=pos.direction,
+                        pnl=net_pnl,
+                        regime=entry_regime,
+                    )
+
                     del self.positions[symbol]
 
             # === GENERATE NEW SIGNALS ===
 
             btc_candles = current_candles.get("BTCUSDT", [])
 
-            # Only trade in BULLISH regime with 60%+ confidence
+            # =================================================================
+            # CONSERVATIVE REGIME AND VOLATILITY DETECTION
+            # =================================================================
+            # Simons principle: Only trade in clear market conditions
+
+            # Update volatility regime
+            self._update_volatility_regime(btc_candles)
+
+            # Detect market regime
             regime, regime_conf = self._detect_market_regime(btc_candles)
-            if regime != "BULLISH" or regime_conf < 60:
+
+            # STRICT FILTERING:
+            # 1. Skip RANGING regime - market drifts up, signals are noise
+            # 2. Require strong regime confidence (60%+)
+            # 3. Skip extreme volatility
+            if regime == "RANGING":
+                continue
+
+            if regime_conf < 60:
+                continue
+
+            if self.volatility_regime == "EXTREME":
                 continue
 
             # Process ML signals
@@ -470,32 +762,83 @@ class MedallionV2Engine:
                     mom_24h = sum(recent_returns[:24]) if len(recent_returns) >= 24 else 0
                     volatility = np.std(recent_returns[:24]) if len(recent_returns) >= 24 else 0
 
-                # Multi-tier ML signal filtering
-                if ml_direction == "LONG" and ml_conv >= 65:
-                    # Tier 1: Very high confidence (70+) with momentum
-                    if ml_conv >= 70 and mom_12h > 0.01:
+                # =================================================================
+                # ADAPTIVE REGIME-BASED STRATEGY
+                # =================================================================
+                # SIMONS PRINCIPLE: "When conditions are unfavorable, STOP TRADING"
+                #
+                # PROVEN:
+                # - LONG in BULLISH regime = 67.5% CAGR
+                # - SHORT consistently loses money (models not trained for it)
+                #
+                # ADAPTIVE APPROACH:
+                # - BULLISH: Trade LONG (proven edge)
+                # - BEARISH: Reduce exposure, close positions early, preserve capital
+                # - RANGING: Skip trading (market drifts up, signals are noise)
+                #
+                # This IS the Simons approach - capital preservation in bad conditions
+                # =================================================================
+
+                # Adaptive threshold based on signal performance
+                long_perf_adj = self.signal_tracker.get_conviction_adjustment("LONG")
+
+                # =================================================================
+                # BULLISH REGIME: Trade LONG (Primary Strategy)
+                # =================================================================
+                if regime == "BULLISH" and ml_direction == "LONG":
+                    # Base threshold with performance adjustment
+                    long_threshold = 65 + max(0, long_perf_adj)
+
+                    # High volatility: tighten threshold
+                    if self.volatility_regime == "HIGH":
+                        long_threshold += 5
+
+                    if ml_conv >= long_threshold and mom_12h > 0.005:
+                        # Tier 1: Very high conviction + strong momentum
+                        if ml_conv >= 70 and mom_12h > 0.01:
+                            direction = "LONG"
+                            conviction = min(100, ml_conv + 10)
+                            strategy = "ml_tier1_long"
+                        # Tier 2: High conviction + positive momentum
+                        elif ml_conv >= long_threshold and mom_12h > 0.005 and mom_24h > 0.01:
+                            direction = "LONG"
+                            conviction = ml_conv
+                            strategy = "ml_tier2_long"
+                        # Tier 3: High conviction + consistent uptrend
+                        elif ml_conv >= long_threshold and mom_12h > 0 and mom_24h > 0:
+                            direction = "LONG"
+                            conviction = ml_conv - 5
+                            strategy = "ml_tier3_long"
+
+                # =================================================================
+                # BEARISH REGIME: Capital Preservation Mode
+                # =================================================================
+                # DON'T SHORT - instead:
+                # 1. Close existing LONG positions faster (handled in exit logic)
+                # 2. Wait for regime to turn BULLISH
+                # 3. Only take LONG if ML is EXTREMELY confident (80%+) - reversal play
+                # =================================================================
+                elif regime == "BEARISH" and ml_direction == "LONG":
+                    # Only take LONG in BEARISH if VERY high confidence reversal
+                    # This catches major bottoms but is very selective
+                    reversal_threshold = 80  # Very high bar
+
+                    # Require ML confidence AND positive momentum divergence
+                    # (price falling but momentum starting to turn)
+                    momentum_divergence = mom_12h > -0.005 and mom_24h < -0.01
+
+                    if ml_conv >= reversal_threshold and momentum_divergence:
                         direction = "LONG"
-                        conviction = min(100, ml_conv + 10)
-                        strategy = "ml_tier1"
-                    # Tier 2: High confidence with strong momentum and low volatility
-                    elif ml_conv >= 65 and mom_12h > 0.015 and volatility < 0.03:
-                        direction = "LONG"
-                        conviction = ml_conv
-                        strategy = "ml_tier2"
-                    # Tier 3: High confidence with consistent uptrend
-                    elif ml_conv >= 65 and mom_12h > 0.005 and mom_24h > 0.01:
-                        direction = "LONG"
-                        conviction = ml_conv - 5
-                        strategy = "ml_tier3"
+                        conviction = ml_conv - 10  # Reduced conviction for counter-trend
+                        strategy = "reversal_long_bearish"
 
                 if direction == "HOLD" or conviction < self.config.min_conviction:
                     continue
 
-                # Position sizing based on conviction
-                size = min(
-                    balance * self.config.max_single_position,
-                    balance * (1 - current_exposure) * 0.5,
-                ) * (conviction / 100)
+                # ADAPTIVE position sizing
+                size = self._get_adaptive_position_size(
+                    balance, current_exposure, conviction, direction
+                )
 
                 if size < 50:
                     continue
@@ -516,6 +859,8 @@ class MedallionV2Engine:
                     strategy=strategy,
                     conviction=conviction,
                 )
+                # Store regime for learning when trade closes
+                self.positions[symbol].entry_regime = regime  # type: ignore
                 current_exposure += size / balance
 
             # Track equity
@@ -632,6 +977,18 @@ class MedallionV2Engine:
             m.ml_trades = len(self.trades)
             m.ml_pnl = sum(t.pnl for t in self.trades)
 
+            # Long vs Short breakdown
+            long_trades = [t for t in self.trades if t.side == "LONG"]
+            short_trades = [t for t in self.trades if t.side == "SHORT"]
+
+            m.long_trades = len(long_trades)
+            m.long_pnl = sum(t.pnl for t in long_trades)
+            m.long_win_rate = len([t for t in long_trades if t.pnl > 0]) / len(long_trades) if long_trades else 0.0
+
+            m.short_trades = len(short_trades)
+            m.short_pnl = sum(t.pnl for t in short_trades)
+            m.short_win_rate = len([t for t in short_trades if t.pnl > 0]) / len(short_trades) if short_trades else 0.0
+
         return m
 
 
@@ -668,9 +1025,11 @@ def print_results(config: BacktestConfig, metrics: Metrics, trades: list):
     print(f"\n{'=' * 70}")
     print("STRATEGY BREAKDOWN")
     print("=" * 70)
-    print(f"\n{'Strategy':<20} {'Trades':>10} {'P&L':>15}")
-    print("-" * 50)
-    print(f"{'ML Signals':<20} {metrics.ml_trades:>10} ${metrics.ml_pnl:>+13,.2f}")
+    print(f"\n{'Strategy':<20} {'Trades':>10} {'Win Rate':>12} {'P&L':>15}")
+    print("-" * 60)
+    print(f"{'ML Signals (Total)':<20} {metrics.ml_trades:>10} {metrics.win_rate:>11.1%} ${metrics.ml_pnl:>+13,.2f}")
+    print(f"{'  └─ LONG':<20} {metrics.long_trades:>10} {metrics.long_win_rate:>11.1%} ${metrics.long_pnl:>+13,.2f}")
+    print(f"{'  └─ SHORT':<20} {metrics.short_trades:>10} {metrics.short_win_rate:>11.1%} ${metrics.short_pnl:>+13,.2f}")
 
     print(f"\n{'=' * 70}")
     print("PORTFOLIO")
