@@ -94,6 +94,7 @@ class BacktestConfig:
     # Trading costs
     slippage_bps: float = 5.0
     taker_fee: float = 0.0005
+    funding_rate_per_8h: float = 0.0001  # 0.01% per 8h funding rate
 
     # Signal thresholds
     min_conviction: float = 50.0
@@ -663,9 +664,13 @@ class MedallionV2Engine:
                     exit_reason = "time_exit"
 
                 if should_exit:
+                    notional = pos.size * self.current_leverage
                     pnl = pos.size * pnl_pct * self.current_leverage
-                    fees = pos.size * self.config.taker_fee * 2
-                    net_pnl = pnl - fees
+                    fees = notional * self.config.taker_fee * 2  # fees on notional, not margin
+                    # Funding rate cost: ~0.01% per 8h, paid every 8h for holding period
+                    funding_periods = max(1, holding // 8)
+                    funding_cost = notional * self.config.funding_rate_per_8h * funding_periods  # 0.01% per 8h
+                    net_pnl = pnl - fees - funding_cost
                     balance += net_pnl
 
                     trade_id += 1
@@ -885,9 +890,13 @@ class MedallionV2Engine:
                     pnl_pct = (price - pos.entry_price) / pos.entry_price
                 else:
                     pnl_pct = (pos.entry_price - price) / pos.entry_price
+                notional = pos.size * self.current_leverage
                 pnl = pos.size * pnl_pct * self.current_leverage
-                fees = pos.size * self.config.taker_fee * 2
-                balance += pnl - fees
+                fees = notional * self.config.taker_fee * 2  # fees on notional, not margin
+                holding = len(candles) - 1  # approximate holding period
+                funding_periods = max(1, holding // 8)
+                funding_cost = notional * self.config.funding_rate_per_8h * funding_periods
+                balance += pnl - fees - funding_cost
 
         if self.client:
             await self.client.close()
@@ -917,7 +926,12 @@ class MedallionV2Engine:
         return all_candles
 
     def _precalculate_features(self, all_candles: dict) -> dict:
-        """Pre-calculate features for all assets."""
+        """Pre-calculate features for all assets.
+
+        IMPORTANT: Features at step i use candles[:i] (exclusive of current candle)
+        to avoid look-ahead bias. In live trading, you compute features from the
+        last *closed* candle, not the current one.
+        """
         logger.info("Pre-calculating features...")
         all_features = {}
         min_window = self.feature_pipeline.config.min_candles
@@ -928,7 +942,9 @@ class MedallionV2Engine:
 
             features_list = []
             for i in range(min_window, len(candles)):
-                window = candles[max(0, i - min_window):i + 1]
+                # FIX: Use candles[:i] not candles[:i+1] to avoid look-ahead bias.
+                # Features should only see *closed* candles, not the current one.
+                window = candles[max(0, i - min_window):i]
                 try:
                     features = self.feature_pipeline.calculate_features(window, use_cache=False)
                     features_list.append(features)

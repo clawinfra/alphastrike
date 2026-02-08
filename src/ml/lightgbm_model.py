@@ -74,7 +74,12 @@ class LightGBMModel:
         self._feature_names: list[str] | None = None
         self._is_trained: bool = False
 
-    def train(self, X: np.ndarray, y: np.ndarray) -> TrainingResult:
+    def train(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        feature_names: list[str] | None = None,
+    ) -> TrainingResult:
         """
         Train the LightGBM model.
 
@@ -84,6 +89,9 @@ class LightGBMModel:
         Args:
             X: Feature matrix of shape (n_samples, n_features)
             y: Target labels (0 or 1 for binary classification)
+            feature_names: Optional list of feature names. If provided, these
+                are stored in the model file for reproducibility and debugging.
+                Without this, features are named feature_0, feature_1, etc.
 
         Returns:
             TrainingResult with training metrics and status
@@ -139,8 +147,18 @@ class LightGBMModel:
 
         n_samples, n_features = X.shape
 
-        # Generate feature names if not provided
-        self._feature_names = [f"feature_{i}" for i in range(n_features)]
+        # Use provided feature names or generate generic ones
+        if feature_names is not None:
+            if len(feature_names) != n_features:
+                logger.warning(
+                    f"Feature names length {len(feature_names)} != n_features {n_features}, "
+                    "falling back to generic names"
+                )
+                self._feature_names = [f"feature_{i}" for i in range(n_features)]
+            else:
+                self._feature_names = list(feature_names)
+        else:
+            self._feature_names = [f"feature_{i}" for i in range(n_features)]
 
         try:
             # Create LightGBM dataset
