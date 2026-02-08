@@ -212,7 +212,12 @@ class BacktestEngine:
         )
 
     def _process_candle(self, candle: Candle) -> None:
-        """Process a single candle through the trading pipeline."""
+        """Process a single candle through the trading pipeline.
+
+        IMPORTANT: Features are calculated from candles *before* the current one
+        to avoid look-ahead bias. The current candle is used only for execution
+        price and exit checks, not for feature generation.
+        """
         # Add to buffer
         self.candle_buffer.append(candle)
 
@@ -230,10 +235,18 @@ class BacktestEngine:
             self._update_equity(candle.timestamp)
             return
 
+        # FIX: Calculate features from all candles EXCEPT the current one
+        # to avoid look-ahead bias. In live trading, features are computed
+        # from the last closed candle, not the current tick.
+        feature_candles = self.candle_buffer[:-1]
+        if len(feature_candles) < self.config.warmup_candles - 1:
+            self._update_equity(candle.timestamp)
+            return
+
         # Calculate features
         try:
             features = self.feature_pipeline.calculate_features(
-                candles=self.candle_buffer,
+                candles=feature_candles,
                 use_cache=False,
             )
         except Exception as e:

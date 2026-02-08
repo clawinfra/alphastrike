@@ -494,6 +494,12 @@ class MedallionLiveEngine:
         """
         Detect market regime using BTC as the market leader.
 
+        WARNING: This is one of THREE separate regime detectors in the codebase:
+        1. src/strategy/regime_detector.py (ADX/ATR, 6 regimes) — formal module
+        2. src/trading/medallion_live.py (this one, SMA/slope, 3 regimes)
+        3. src/strategy/simons_engine.py (simplified ADX, 3 regimes)
+        TODO: Unify into a single implementation to avoid divergent behavior.
+
         Returns:
             (regime, strength): regime is BULLISH/BEARISH/RANGING, strength 0-100
         """
@@ -561,16 +567,27 @@ class MedallionLiveEngine:
         return regime, strength
 
     def _get_ml_signal(self, symbol: str, features: dict) -> tuple[str, float]:
-        """Get LightGBM prediction."""
+        """Get LightGBM prediction with feature name validation."""
         if symbol not in self.ml_models or not features:
             return "HOLD", 0.0
 
         try:
+            model = self.ml_models[symbol]
             feature_names = self.feature_pipeline.feature_names
-            X = np.array([[features.get(name, 0.0) for name in feature_names]])
+
+            # Validate feature alignment: if the model has named features,
+            # use its feature order to avoid silent misalignment
+            model_feature_names = model.feature_names
+            if model_feature_names and model_feature_names[0] != "feature_0":
+                # Model has real feature names — use model's ordering
+                X = np.array([[features.get(name, 0.0) for name in model_feature_names]])
+            else:
+                # Model has generic names — use pipeline ordering (legacy)
+                X = np.array([[features.get(name, 0.0) for name in feature_names]])
+
             X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
 
-            pred = self.ml_models[symbol].predict(X)[0]
+            pred = model.predict(X)[0]
 
             if pred > self.config.ml_long_threshold:
                 confidence = min(100, (pred - 0.5) * 250)

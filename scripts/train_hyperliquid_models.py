@@ -355,7 +355,7 @@ async def train_models_for_symbol(
                 is_unbalance=True,
             )
         )
-        lgb.train(X_train, y_train)
+        lgb.train(X_train, y_train, feature_names=feature_names)
         preds = lgb.predict(X_val)
 
         if is_degenerate(preds):
@@ -370,7 +370,7 @@ async def train_models_for_symbol(
                     reg_lambda=2.0,
                 )
             )
-            lgb.train(X_train, y_train)
+            lgb.train(X_train, y_train, feature_names=feature_names)
             preds = lgb.predict(X_val)
 
         acc = float(np.mean((preds > 0.5) == y_val))
