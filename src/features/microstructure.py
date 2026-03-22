@@ -16,10 +16,15 @@ from __future__ import annotations
 
 import logging
 import statistics
+import threading
+import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from src.exchange.models import UnifiedOrderbook
 
 logger = logging.getLogger(__name__)
 
@@ -253,8 +258,8 @@ class MicrostructureFeatures:
         oldest_oi = recent_oi[0]
         newest_oi = recent_oi[-1]
 
-        if oldest_oi <= 0:
-            return 0.0
+        if oldest_oi <= 0:  # pragma: no cover
+            return 0.0  # Unreachable: filter on line 251 guarantees oldest_oi > 0
 
         pct_change = (newest_oi - oldest_oi) / oldest_oi
 
@@ -307,8 +312,8 @@ class MicrostructureFeatures:
         total_trades = len(prices)
         probabilities = [b / total_trades for b in bins if b > 0]
 
-        if len(probabilities) <= 1:
-            return 1.0  # Single bin = maximum concentration
+        if len(probabilities) <= 1:  # pragma: no cover
+            return 1.0  # Single bin = maximum concentration (unreachable: price_range>0 always splits)
 
         # Calculate entropy
         entropy = -sum(p * np.log(p + 1e-10) for p in probabilities)
@@ -453,6 +458,119 @@ class MicrostructureFeatures:
         self._trade_sizes = []
 
 
+class OrderbookCache:
+    """Thread-safe per-symbol cache for order book snapshots with TTL."""
+
+    def __init__(self, ttl_seconds: float = 10.0) -> None:
+        """
+        Initialize the cache.
+
+        Args:
+            ttl_seconds: Time-to-live for cached entries (default 10s)
+        """
+        self._ttl = ttl_seconds
+        self._store: dict[str, tuple[float, OrderbookSnapshot]] = {}
+        self._lock = threading.Lock()
+
+    def get(self, symbol: str) -> OrderbookSnapshot | None:
+        """
+        Get cached snapshot if not expired.
+
+        Args:
+            symbol: Trading pair symbol (e.g., "BTCUSDT")
+
+        Returns:
+            Cached OrderbookSnapshot if valid, None if expired or missing
+        """
+        with self._lock:
+            entry = self._store.get(symbol)
+            if entry is None:
+                return None
+            expiry, snapshot = entry
+            if time.monotonic() >= expiry:
+                del self._store[symbol]
+                return None
+            return snapshot
+
+    def put(self, symbol: str, snapshot: OrderbookSnapshot) -> None:
+        """
+        Store a snapshot in cache.
+
+        Args:
+            symbol: Trading pair symbol
+            snapshot: OrderbookSnapshot to cache
+        """
+        with self._lock:
+            expiry = time.monotonic() + self._ttl
+            self._store[symbol] = (expiry, snapshot)
+
+    def invalidate(self, symbol: str | None = None) -> None:
+        """
+        Invalidate cache entries.
+
+        Args:
+            symbol: Specific symbol to invalidate, or None for all
+        """
+        with self._lock:
+            if symbol is None:
+                self._store.clear()
+            else:
+                self._store.pop(symbol, None)
+
+    @property
+    def size(self) -> int:
+        """Return number of cached entries."""
+        with self._lock:
+            return len(self._store)
+
+
+def calculate_top5_orderbook_imbalance(orderbook: OrderbookSnapshot | None) -> float:
+    """
+    Calculate top-5 level order book imbalance ratio.
+
+    This is a 0-1 ratio representing bid-side dominance:
+    - sum(bid_sizes[:5]) / (sum(bid_sizes[:5]) + sum(ask_sizes[:5]))
+    - >0.6 = bid-heavy (bullish signal)
+    - <0.4 = ask-heavy (bearish signal)
+    - 0.5 = balanced
+
+    Args:
+        orderbook: OrderbookSnapshot with bids and asks as [(price, qty), ...]
+
+    Returns:
+        Float in [0.0, 1.0]. Returns 0.5 (neutral) if orderbook is None,
+        empty, or has zero total depth.
+    """
+    if orderbook is None:
+        return 0.5
+
+    bid_sum = sum(qty for _, qty in orderbook.bids[:5])
+    ask_sum = sum(qty for _, qty in orderbook.asks[:5])
+    total = bid_sum + ask_sum
+
+    if total == 0.0:
+        return 0.5
+
+    return float(bid_sum / total)
+
+
+def orderbook_from_unified(unified: "UnifiedOrderbook") -> OrderbookSnapshot:
+    """
+    Convert a UnifiedOrderbook (from exchange adapter) to OrderbookSnapshot.
+
+    Args:
+        unified: UnifiedOrderbook from exchange adapter
+
+    Returns:
+        OrderbookSnapshot suitable for microstructure calculations
+    """
+    return OrderbookSnapshot(
+        bids=list(unified.bids),
+        asks=list(unified.asks),
+        timestamp=unified.timestamp.timestamp(),
+    )
+
+
 def calculate_microstructure_features(data: MicrostructureData) -> dict[str, float]:
     """
     Convenience function to calculate all microstructure features.
@@ -503,5 +621,10 @@ MICROSTRUCTURE_FEATURE_INFO: dict[str, dict[str, Any]] = {
         "range": (-1, 1),
         "description": "Buy vs sell volume imbalance",
         "bullish_interpretation": "Positive values indicate net buying",
+    },
+    "top5_orderbook_imbalance": {
+        "range": (0, 1),
+        "description": "Top-5 level bid/ask depth ratio (0=all asks, 1=all bids)",
+        "bullish_interpretation": ">0.6 indicates bid-heavy book (bullish)",
     },
 }

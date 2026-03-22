@@ -188,7 +188,7 @@ class ParameterOptimizer:
             self._enqueue_current_config(study, current_config)
 
         # Run optimization
-        def objective(trial: optuna.Trial) -> float:
+        def objective(trial: "optuna.Trial") -> float:  # type: ignore[name-defined]
             params = self._sample_params(trial)
             try:
                 result = self.backtest_func(symbol, params)
@@ -262,7 +262,7 @@ class ParameterOptimizer:
 
         return result
 
-    def _sample_params(self, trial: optuna.Trial) -> dict:
+    def _sample_params(self, trial: "optuna.Trial") -> dict:  # type: ignore[name-defined]
         """Sample parameters from search space."""
         ps = self.param_space
 
@@ -308,7 +308,7 @@ class ParameterOptimizer:
         return params
 
     def _enqueue_current_config(
-        self, study: optuna.Study, config: AdaptiveAssetConfig
+        self, study: "optuna.Study", config: AdaptiveAssetConfig  # type: ignore[name-defined]
     ) -> None:
         """Add current config as first trial (warm start)."""
         study.enqueue_trial({

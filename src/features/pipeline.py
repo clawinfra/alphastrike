@@ -34,7 +34,10 @@ from src.data.database import Candle
 from src.features.microstructure import (
     MicrostructureData,
     MicrostructureFeatures,
+    OrderbookCache,
     OrderbookSnapshot,
+    calculate_top5_orderbook_imbalance,
+    orderbook_from_unified,
 )
 from src.features.technical import TechnicalFeatures
 
@@ -593,7 +596,7 @@ class FeaturePipeline:
         # Technical features (35)
         names.extend(self._technical.feature_names)
 
-        # Microstructure features (7)
+        # Microstructure features (8)
         names.extend([
             "orderbook_imbalance",
             "funding_rate",
@@ -602,6 +605,7 @@ class FeaturePipeline:
             "volume_profile",
             "large_trade_ratio",
             "trade_flow_imbalance",
+            "top5_orderbook_imbalance",
         ])
 
         # Fee features (5)
@@ -818,7 +822,11 @@ class FeaturePipeline:
         """Calculate microstructure features."""
         # If pre-built microstructure data provided, use it
         if microstructure_data is not None:
-            return self._microstructure.calculate(microstructure_data)
+            result = self._microstructure.calculate(microstructure_data)
+            result["top5_orderbook_imbalance"] = calculate_top5_orderbook_imbalance(
+                microstructure_data.orderbook
+            )
+            return result
 
         # Build MicrostructureData from inputs
         data = MicrostructureData()
@@ -831,7 +839,9 @@ class FeaturePipeline:
 
             data.funding = FundingInfo(funding_rate=ticker_data.funding_rate)
 
-        return self._microstructure.calculate(data)
+        result = self._microstructure.calculate(data)
+        result["top5_orderbook_imbalance"] = calculate_top5_orderbook_imbalance(data.orderbook)
+        return result
 
     def _candles_to_arrays(
         self,
@@ -933,6 +943,7 @@ class FeaturePipeline:
             "volume_profile": 0.5,
             "large_trade_ratio": 0.0,
             "trade_flow_imbalance": 0.0,
+            "top5_orderbook_imbalance": 0.5,
         }
 
     def _get_default_fee_features(self) -> dict[str, float]:

@@ -59,7 +59,9 @@ from src.data.websocket_client import (
 from src.execution.order_manager import ExecutionResult, OrderManager
 from src.execution.order_manager import SignalResult as OrderSignalResult
 from src.execution.signal_processor import SignalProcessor, SignalResult
-from src.features.pipeline import FeaturePipeline, TickerData, get_feature_pipeline
+from src.exchange.adapters.hyperliquid.adapter import HyperliquidRESTClient
+from src.features.microstructure import OrderbookCache, orderbook_from_unified
+from src.features.pipeline import FeaturePipeline, OrderbookData, TickerData, get_feature_pipeline
 from src.ml.confidence_filter import ConfidenceFilter
 from src.ml.ensemble import MLEnsemble
 from src.risk.portfolio import PortfolioManager, Position
@@ -307,6 +309,12 @@ class TradingBot:
         self._candle_buffers: dict[str, list[Candle]] = {}
         self._max_candle_buffer_size = 500
 
+        # Orderbook cache (10s TTL per symbol)
+        self._orderbook_cache: OrderbookCache = OrderbookCache(ttl_seconds=10.0)
+
+        # HL REST client for live orderbook fetching (optional; None = skip orderbook feature)
+        self._hl_rest: HyperliquidRESTClient | None = None
+
         # Last tick times
         self._last_position_sync = 0.0
         self._last_model_reload_check = 0.0
@@ -415,6 +423,15 @@ class TradingBot:
         for symbol in self.settings.trading_pairs:
             self._candle_buffers[symbol] = []
 
+        # 16. HL REST client for live orderbook fetching
+        try:
+            self._hl_rest = HyperliquidRESTClient()
+            await self._hl_rest.initialize()
+            logger.info("HL REST client initialized for live orderbook fetching")
+        except Exception as e:
+            logger.warning(f"HL REST client initialization failed, orderbook feature disabled: {e}")
+            self._hl_rest = None
+
         logger.info("All components initialized successfully")
 
     async def start(self) -> None:
@@ -441,7 +458,7 @@ class TradingBot:
             await self.ws_client.connect()
             await self.ws_client.subscribe_candles(
                 symbols=self.settings.trading_pairs,
-                interval="1m",
+                interval="5m",
             )
             logger.info(f"Subscribed to candles for {len(self.settings.trading_pairs)} pairs")
 
@@ -580,11 +597,36 @@ class TradingBot:
                 logger.debug(f"Insufficient candles for {symbol}: {len(candles)}")
                 return
 
-            # 3. Calculate features
+            # 3. Fetch live orderbook (cached, 10s TTL) for microstructure features
+            orderbook_data: OrderbookData | None = None
+            cached_snapshot = self._orderbook_cache.get(symbol)
+            if cached_snapshot is not None:
+                orderbook_data = OrderbookData(
+                    bids=cached_snapshot.bids,
+                    asks=cached_snapshot.asks,
+                    timestamp=cached_snapshot.timestamp,
+                )
+            elif self._hl_rest is not None:
+                try:
+                    unified_ob = await self._hl_rest.get_orderbook(symbol)
+                    snapshot = orderbook_from_unified(unified_ob)
+                    self._orderbook_cache.put(symbol, snapshot)
+                    orderbook_data = OrderbookData(
+                        bids=snapshot.bids,
+                        asks=snapshot.asks,
+                        timestamp=snapshot.timestamp,
+                    )
+                except Exception as e:
+                    logger.debug(f"Orderbook fetch failed for {symbol}: {e}")
+
+            # 4. Calculate features
             if not self.feature_pipeline:
                 return
 
-            features = self.feature_pipeline.calculate_features(candles=candles)
+            features = self.feature_pipeline.calculate_features(
+                candles=candles,
+                orderbook_data=orderbook_data,
+            )
 
             if not features:
                 logger.warning(f"Feature calculation failed for {symbol}")
