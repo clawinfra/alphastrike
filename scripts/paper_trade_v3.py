@@ -33,8 +33,8 @@ RSI_OVERBOUGHT = 55
 VOLUME_RATIO_MIN = 1.0
 TOP5_LEVELS = 5
 
-STATE_FILE = Path(__file__).parent.parent / "data" / "paper_trade_state.json"
-LOG_FILE   = Path(__file__).parent.parent / "data" / "paper_trade_log.jsonl"
+STATE_FILE = Path(os.environ.get("ALPHASTATE", str(Path.home() / ".openclaw/workspace/memory/alphastrike_v3_state.json")))
+LOG_FILE = Path(os.environ.get("ALPHALOG", str(Path.home() / ".openclaw/workspace/memory/alphastrike_v3_log.jsonl")))
 
 HL_INFO_URL = "https://api.hyperliquid.xyz/info"
 
